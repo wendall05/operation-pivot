@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
+const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
@@ -16,12 +18,19 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const upload = multer({ dest: UPLOADS_DIR, limits: { fileSize: 10 * 1024 * 1024 } });
 
+const dbUrl = process.env.DATABASE_URL || '';
+const sessionPool = new Pool({
+  connectionString: dbUrl,
+  ssl: dbUrl.includes('.railway.internal') || !dbUrl ? false : { rejectUnauthorized: false },
+});
+
 app.set('trust proxy', 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(session({
+  store: new pgSession({ pool: sessionPool, createTableIfMissing: true }),
   secret: process.env.SESSION_SECRET || 'op-dev-secret-2026',
   resave: false,
   saveUninitialized: false,
