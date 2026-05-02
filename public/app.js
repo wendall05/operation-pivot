@@ -65,6 +65,7 @@ function shell(content, modals = '') {
   const navLinks = [
     { page: 'dashboard', label: 'Dashboard', svg: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>' },
     { page: 'trips', label: 'Trips', svg: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>' },
+    { page: 'sports', label: 'Sports', svg: '<circle cx="12" cy="12" r="10"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 9.17l4.24-4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M9.17 14.83l-4.24 4.24"/><circle cx="12" cy="12" r="4"/>' },
     { page: 'roster', label: 'Roster', svg: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>' },
     { page: 'reports', label: 'Reports', svg: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>' },
     { page: 'settings', label: 'Settings', svg: '<circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 19.07l1.41-1.41M4.93 4.93l1.41 1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/>' },
@@ -127,6 +128,7 @@ async function render() {
       case 'dashboard':    [content, modals] = await renderDashboard(); break;
       case 'trips':        [content, modals] = await renderTrips(); break;
       case 'trip-detail':  [content, modals] = await renderTripDetail(); break;
+      case 'sports':       [content, modals] = await renderSports(); break;
       case 'roster':       [content, modals] = await renderRoster(); break;
       case 'reports':      [content, modals] = await renderReports(); break;
       case 'settings':     [content, modals] = await renderSettings(); break;
@@ -777,6 +779,166 @@ async function updateTrip(id) {
 async function deleteTrip(id) {
   if (!confirm('Delete this trip? This cannot be undone.')) return;
   try { await DEL(`/api/trips/${id}`); toast('Trip deleted'); nav('trips'); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+// ── Sports ────────────────────────────────────────────────────────────────────
+async function renderSports() {
+  const sports = await GET('/api/sports');
+
+  const seasonLabel = { fall: 'Fall', winter: 'Winter', spring: 'Spring', 'year-round': 'Year-Round' };
+  const genderLabel = { mens: "Men's", womens: "Women's", coed: 'Co-Ed' };
+
+  const rows = sports.length === 0
+    ? '<tr><td colspan="5" class="px-5 py-10 text-center text-slate-400 text-sm">No sports yet — add your first sport to get started.</td></tr>'
+    : sports.map(s => `
+      <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50/40">
+        <td class="px-5 py-3 font-medium text-slate-800">${esc(s.name)}</td>
+        <td class="px-5 py-3">
+          <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">${esc(seasonLabel[s.season] || s.season || '—')}</span>
+        </td>
+        <td class="px-5 py-3 text-slate-600 text-sm">${esc(genderLabel[s.gender] || s.gender || '—')}</td>
+        <td class="px-5 py-3 text-slate-600 text-sm">${esc(s.head_coach || '—')}</td>
+        <td class="px-5 py-3 text-right flex justify-end gap-1">
+          ${actionIcon('edit', `openEditSport(${s.id},'${esc(s.name)}','${s.season||''}','${s.gender||''}','${esc(s.head_coach||'')}')`)}
+          ${actionIcon('delete', `deleteSport(${s.id},'${esc(s.name)}')`)}
+        </td>
+      </tr>`).join('');
+
+  const content = `
+    <div class="fade-in">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-xl font-bold text-slate-900">Sports</h1>
+          <p class="text-slate-500 text-sm mt-0.5">${sports.length} program${sports.length !== 1 ? 's' : ''}</p>
+        </div>
+        <button onclick="openNewSport()" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">+ Add Sport</button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+          <thead><tr class="bg-slate-50 border-b border-slate-200">
+            <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase">Sport</th>
+            <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase">Season</th>
+            <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase">Gender</th>
+            <th class="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase">Head Coach</th>
+            <th class="px-5 py-3"></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      ${sports.length > 0 ? `
+      <div class="mt-5 grid grid-cols-3 gap-4">
+        ${['fall','winter','spring'].map(season => {
+          const list = sports.filter(s => s.season === season);
+          return list.length === 0 ? '' : `
+          <div class="bg-white rounded-xl shadow-sm p-4">
+            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">${seasonLabel[season]} Season</h3>
+            <div class="space-y-2">
+              ${list.map(s => `
+                <div class="flex items-center gap-2 text-sm">
+                  <span class="w-2 h-2 rounded-full flex-shrink-0" style="background:#059669"></span>
+                  <span class="font-medium text-slate-800">${esc(s.name)}</span>
+                  ${s.head_coach ? `<span class="text-slate-400 text-xs ml-auto truncate">${esc(s.head_coach)}</span>` : ''}
+                </div>`).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+    </div>`;
+
+  const modal = `
+    <div id="sport-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+          <h3 id="sport-modal-title" class="font-semibold text-slate-900">Add Sport</h3>
+          <button onclick="closeModal('sport-modal')" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="p-5 space-y-3">
+          <input type="hidden" id="sp-id" value="" />
+          <div id="sp-error" class="hidden p-3 bg-red-50 text-red-700 text-sm rounded-lg"></div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Sport Name *</label>
+            <input id="sp-name" type="text" placeholder="Men's Basketball" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Season</label>
+              <select id="sp-season" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                <option value="fall">Fall</option>
+                <option value="winter">Winter</option>
+                <option value="spring">Spring</option>
+                <option value="year-round">Year-Round</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Gender</label>
+              <select id="sp-gender" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                <option value="mens">Men's</option>
+                <option value="womens">Women's</option>
+                <option value="coed">Co-Ed</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Head Coach</label>
+            <input id="sp-coach" type="text" placeholder="Coach Smith" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          </div>
+        </div>
+        <div class="p-5 border-t border-slate-100 flex justify-end gap-3">
+          <button onclick="closeModal('sport-modal')" class="px-4 py-2 text-sm text-slate-600">Cancel</button>
+          <button onclick="saveSport()" class="px-5 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Save</button>
+        </div>
+      </div>
+    </div>`;
+
+  return [content, modal];
+}
+
+function openNewSport() {
+  document.getElementById('sport-modal-title').textContent = 'Add Sport';
+  document.getElementById('sp-id').value = '';
+  document.getElementById('sp-name').value = '';
+  document.getElementById('sp-season').value = 'fall';
+  document.getElementById('sp-gender').value = 'mens';
+  document.getElementById('sp-coach').value = '';
+  document.getElementById('sp-error').classList.add('hidden');
+  modal('sport-modal');
+}
+
+function openEditSport(id, name, season, gender, coach) {
+  document.getElementById('sport-modal-title').textContent = 'Edit Sport';
+  document.getElementById('sp-id').value = id;
+  document.getElementById('sp-name').value = name;
+  document.getElementById('sp-season').value = season || 'fall';
+  document.getElementById('sp-gender').value = gender || 'mens';
+  document.getElementById('sp-coach').value = coach;
+  document.getElementById('sp-error').classList.add('hidden');
+  modal('sport-modal');
+}
+
+async function saveSport() {
+  const id = document.getElementById('sp-id').value;
+  const name = document.getElementById('sp-name').value.trim();
+  if (!name) { document.getElementById('sp-error').textContent = 'Sport name is required'; document.getElementById('sp-error').classList.remove('hidden'); return; }
+  const body = {
+    name,
+    season: document.getElementById('sp-season').value,
+    gender: document.getElementById('sp-gender').value,
+    head_coach: document.getElementById('sp-coach').value.trim() || null,
+  };
+  try {
+    if (id) { await PUT(`/api/sports/${id}`, body); toast('Sport updated'); }
+    else { await POST('/api/sports', body); toast('Sport added'); }
+    closeModal('sport-modal');
+    nav('sports');
+  } catch (e) { document.getElementById('sp-error').textContent = e.message; document.getElementById('sp-error').classList.remove('hidden'); }
+}
+
+async function deleteSport(id, name) {
+  if (!confirm(`Delete ${name}? All athletes and trips linked to this sport will be affected.`)) return;
+  try { await DEL(`/api/sports/${id}`); toast('Sport removed'); nav('sports'); }
   catch (e) { toast(e.message, 'error'); }
 }
 

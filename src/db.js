@@ -137,7 +137,7 @@ async function initDb() {
 
   const { rows: [school] } = await query(
     `INSERT INTO schools (name, division, state, ein, address, phone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    ['Cortland State University', 'D3', 'NY', '14-6001765', '1 Academic Dr, Cortland, NY 13045', '(607) 753-2000']
+    ['University of the Cumberlands', 'NAIA', 'KY', '61-0549200', '6191 College Station Dr, Williamsburg, KY 40769', '(606) 549-2200']
   );
   const schoolId = school.id;
 
