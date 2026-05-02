@@ -657,7 +657,7 @@ async function renderTripDetail() {
       </div>
       <div class="flex items-center gap-3 pt-2">
         <button onclick="updateTrip(${id})" class="px-5 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Save Changes</button>
-        <button onclick="deleteTrip(${id})" class="px-4 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50">Delete Trip</button>
+        ${S.user?.role === 'admin' ? `<button onclick="deleteTrip(${id})" class="px-4 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50">Delete Trip</button>` : ''}
       </div>
     </div>`;
 
@@ -800,8 +800,8 @@ async function renderSports() {
         <td class="px-5 py-3 text-slate-600 text-sm">${esc(genderLabel[s.gender] || s.gender || '—')}</td>
         <td class="px-5 py-3 text-slate-600 text-sm">${esc(s.head_coach || '—')}</td>
         <td class="px-5 py-3 text-right flex justify-end gap-1">
-          ${actionIcon('edit', `openEditSport(${s.id},'${esc(s.name)}','${s.season||''}','${s.gender||''}','${esc(s.head_coach||'')}')`)}
-          ${actionIcon('delete', `deleteSport(${s.id},'${esc(s.name)}')`)}
+          ${S.user?.role === 'admin' ? actionIcon('edit', `openEditSport(${s.id},'${esc(s.name)}','${s.season||''}','${s.gender||''}','${esc(s.head_coach||'')}')`) : ''}
+          ${S.user?.role === 'admin' ? actionIcon('delete', `deleteSport(${s.id},'${esc(s.name)}')`) : ''}
         </td>
       </tr>`).join('');
 
@@ -812,7 +812,7 @@ async function renderSports() {
           <h1 class="text-xl font-bold text-slate-900">Sports</h1>
           <p class="text-slate-500 text-sm mt-0.5">${sports.length} program${sports.length !== 1 ? 's' : ''}</p>
         </div>
-        <button onclick="openNewSport()" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">+ Add Sport</button>
+        ${S.user?.role === 'admin' ? `<button onclick="openNewSport()" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">+ Add Sport</button>` : ''}
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -972,7 +972,7 @@ async function renderRoster() {
           <p class="text-slate-500 text-sm mt-0.5">${athletes.length} athletes across ${sports.length} sports</p>
         </div>
         <div class="flex items-center gap-2">
-          <button onclick="modal('import-csv-modal')" class="px-4 py-2 rounded-lg text-sm font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50">↑ Import CSV</button>
+          ${S.user?.role === 'admin' ? `<button onclick="modal('import-csv-modal')" class="px-4 py-2 rounded-lg text-sm font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50">↑ Import CSV</button>` : ''}
           <button onclick="modal('new-athlete-modal')" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">+ Add Athlete</button>
         </div>
       </div>
@@ -1021,7 +1021,7 @@ async function renderRoster() {
                       </td>
                       <td class="px-4 py-3 text-right flex justify-end gap-1">
                         ${actionIcon('edit', `openEditAthlete(${a.id},'${esc(a.name)}','${a.sport_id}','${esc(a.student_id||'')}','${esc(a.year||'')}','${a.eligibility_status}','${esc(a.eligibility_note||'')}')`)}
-                        ${actionIcon('delete', `deleteAthlete(${a.id})`)}
+                        ${S.user?.role === 'admin' ? actionIcon('delete', `deleteAthlete(${a.id})`) : ''}
                       </td>
                     </tr>`).join('')}
                 </tbody>
@@ -1349,7 +1349,7 @@ async function renderSettings() {
               <input id="sch-addr" type="text" value="${esc(school.address||'')}" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
             </div>
           </div>
-          <button onclick="saveSchool()" class="mt-4 px-5 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Save</button>
+          ${S.user?.role === 'admin' ? `<button onclick="saveSchool()" class="mt-4 px-5 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Save</button>` : '<p class="mt-3 text-xs text-slate-400">Admin access required to edit school info.</p>'}
         </div>
 
         <!-- Tax Certs -->
@@ -1359,7 +1359,7 @@ async function renderSettings() {
               <h2 class="font-semibold text-slate-900 text-sm">Tax Exemption Certificates</h2>
               <p class="text-xs text-slate-500 mt-0.5">Upload state tax exemption certs — automatically matched to trips by state</p>
             </div>
-            <button onclick="modal('upload-cert-modal')" class="px-3 py-1.5 text-xs font-semibold rounded-lg text-white" style="background:#059669">+ Upload Cert</button>
+            ${S.user?.role === 'admin' ? `<button onclick="modal('upload-cert-modal')" class="px-3 py-1.5 text-xs font-semibold rounded-lg text-white" style="background:#059669">+ Upload Cert</button>` : ''}
           </div>
           ${certs.length === 0
             ? '<p class="text-slate-400 text-sm">No certificates uploaded yet.</p>'
@@ -1380,7 +1380,7 @@ async function renderSettings() {
                   </div>
                   <div class="flex items-center gap-1">
                     ${c.file_path ? `<a href="/api/tax-certs/${c.id}/download" class="p-1.5 rounded hover:bg-slate-100 text-slate-400">${actionIcon('download','')}</a>` : ''}
-                    ${actionIcon('delete', `deleteCert(${c.id})`)}
+                    ${S.user?.role === 'admin' ? actionIcon('delete', `deleteCert(${c.id})`) : ''}
                   </div>
                 </div>`;}).join('')}
             </div>`}
@@ -1390,7 +1390,7 @@ async function renderSettings() {
         <div class="bg-white rounded-xl shadow-sm p-5">
           <div class="flex items-center justify-between mb-4">
             <h2 class="font-semibold text-slate-900 text-sm">Staff Accounts</h2>
-            <button onclick="modal('new-user-modal')" class="px-3 py-1.5 text-xs font-semibold rounded-lg text-white" style="background:#059669">+ Add User</button>
+            ${S.user?.role === 'admin' ? `<button onclick="modal('new-user-modal')" class="px-3 py-1.5 text-xs font-semibold rounded-lg text-white" style="background:#059669">+ Add User</button>` : ''}
           </div>
           <table class="w-full text-sm">
             <thead><tr class="bg-slate-50 border-b border-slate-200 rounded-lg">
@@ -1406,7 +1406,7 @@ async function renderSettings() {
                   <td class="px-4 py-3 text-slate-500">${esc(u.email)}</td>
                   <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-semibold ${u.role==='admin'?'bg-brand-100 text-brand-800':'bg-slate-100 text-slate-600'}">${esc(u.role)}</span></td>
                   <td class="px-4 py-3 text-right">
-                    ${u.id !== S.user.id ? actionIcon('delete', `deleteUser(${u.id})`) : '<span class="text-xs text-slate-400 px-2">You</span>'}
+                    ${u.id === S.user.id ? '<span class="text-xs text-slate-400 px-2">You</span>' : S.user?.role === 'admin' ? actionIcon('delete', `deleteUser(${u.id})`) : ''}
                   </td>
                 </tr>`).join('')}
             </tbody>

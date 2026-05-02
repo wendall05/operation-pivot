@@ -32,6 +32,13 @@ function requireAuth(req, res, next) {
   next();
 }
 
+async function requireAdmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { rows } = await query('SELECT role FROM users WHERE id=$1', [req.session.userId]);
+  if (!rows[0] || rows[0].role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
+
 async function logActivity(schoolId, userId, action, detail, entityType, entityId) {
   try {
     await query(`INSERT INTO activity_log (school_id,user_id,action,detail,entity_type,entity_id) VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -68,7 +75,7 @@ app.get('/api/school', requireAuth, async (req, res) => {
   res.json(rows[0] || {});
 });
 
-app.put('/api/school', requireAuth, async (req, res) => {
+app.put('/api/school', requireAdmin, async (req, res) => {
   const { name, division, state, ein, address, phone, website } = req.body;
   await query(`UPDATE schools SET name=$1,division=$2,state=$3,ein=$4,address=$5,phone=$6,website=$7 WHERE id=$8`,
     [name, division, state, ein, address, phone, website, req.session.schoolId]);
@@ -81,21 +88,21 @@ app.get('/api/sports', requireAuth, async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/sports', requireAuth, async (req, res) => {
+app.post('/api/sports', requireAdmin, async (req, res) => {
   const { name, season, gender, head_coach } = req.body;
   const { rows } = await query('INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES ($1,$2,$3,$4,$5) RETURNING id',
     [req.session.schoolId, name, season, gender, head_coach]);
   res.json({ id: rows[0].id });
 });
 
-app.put('/api/sports/:id', requireAuth, async (req, res) => {
+app.put('/api/sports/:id', requireAdmin, async (req, res) => {
   const { name, season, gender, head_coach } = req.body;
   await query('UPDATE sports SET name=$1,season=$2,gender=$3,head_coach=$4 WHERE id=$5 AND school_id=$6',
     [name, season, gender, head_coach, req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
-app.delete('/api/sports/:id', requireAuth, async (req, res) => {
+app.delete('/api/sports/:id', requireAdmin, async (req, res) => {
   await query('DELETE FROM sports WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
@@ -132,7 +139,7 @@ app.put('/api/athletes/:id', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete('/api/athletes/:id', requireAuth, async (req, res) => {
+app.delete('/api/athletes/:id', requireAdmin, async (req, res) => {
   await query('DELETE FROM athletes WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
@@ -218,7 +225,7 @@ app.put('/api/trips/:id', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete('/api/trips/:id', requireAuth, async (req, res) => {
+app.delete('/api/trips/:id', requireAdmin, async (req, res) => {
   await query('DELETE FROM trip_manifest WHERE trip_id=$1', [req.params.id]);
   await query('DELETE FROM trips WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
@@ -266,7 +273,7 @@ app.get('/api/tax-certs', requireAuth, async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/tax-certs', requireAuth, upload.single('cert_file'), async (req, res) => {
+app.post('/api/tax-certs', requireAdmin, upload.single('cert_file'), async (req, res) => {
   const { state, cert_number, issued_date, expiry_date } = req.body;
   const file = req.file;
   const { rows } = await query('INSERT INTO tax_certs (school_id,state,cert_number,issued_date,expiry_date,file_name,file_path) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
@@ -275,7 +282,7 @@ app.post('/api/tax-certs', requireAuth, upload.single('cert_file'), async (req, 
   res.json({ id: rows[0].id });
 });
 
-app.delete('/api/tax-certs/:id', requireAuth, async (req, res) => {
+app.delete('/api/tax-certs/:id', requireAdmin, async (req, res) => {
   const { rows } = await query('SELECT * FROM tax_certs WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   if (rows[0]?.file_path && fs.existsSync(rows[0].file_path)) fs.unlinkSync(rows[0].file_path);
   await query('DELETE FROM tax_certs WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
@@ -362,7 +369,7 @@ app.get('/api/users', requireAuth, async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/users', requireAuth, async (req, res) => {
+app.post('/api/users', requireAdmin, async (req, res) => {
   const { name, email, password, role, phone } = req.body;
   try {
     const { rows } = await query('INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
@@ -371,7 +378,7 @@ app.post('/api/users', requireAuth, async (req, res) => {
   } catch { res.status(400).json({ error: 'Email already in use' }); }
 });
 
-app.put('/api/users/:id', requireAuth, async (req, res) => {
+app.put('/api/users/:id', requireAdmin, async (req, res) => {
   const { name, email, role, phone, password } = req.body;
   if (password) {
     await query('UPDATE users SET name=$1,email=$2,role=$3,phone=$4,password_hash=$5 WHERE id=$6 AND school_id=$7',
@@ -383,7 +390,7 @@ app.put('/api/users/:id', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete('/api/users/:id', requireAuth, async (req, res) => {
+app.delete('/api/users/:id', requireAdmin, async (req, res) => {
   if (req.params.id == req.session.userId) return res.status(400).json({ error: 'Cannot delete yourself' });
   await query('DELETE FROM users WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
