@@ -546,7 +546,13 @@ async function renderTripDetail() {
   const certStatus = trip.charter_vendor ? (
     matchCert
       ? `<div class="flex items-center gap-2 text-sm text-emerald-700 font-medium"><span class="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center text-xs">✓</span> ${esc(trip.charter_state)} cert on file — ${esc(matchCert.cert_number||'')} (expires ${fmt(matchCert.expiry_date)})</div>`
-      : `<div class="flex items-center gap-2 text-sm text-red-700 font-medium"><span class="w-5 h-5 rounded-full bg-red-100 flex items-center justify-center text-xs">!</span> No tax exemption cert on file for ${esc(trip.charter_state||'this state')} — <button onclick="nav('settings')" class="underline">Upload in Settings</button></div>`
+      : `<div class="flex items-center justify-between">
+          <div class="flex items-center gap-2 text-sm text-red-700 font-medium">
+            <span class="w-5 h-5 rounded-full bg-red-100 flex items-center justify-center text-xs">!</span>
+            No tax exemption cert on file for ${esc(trip.charter_state||'this state')}
+          </div>
+          ${S.user?.role === 'admin' ? `<button onclick="openQuickCert('${esc(trip.charter_state||'')}')" class="px-3 py-1.5 text-xs font-semibold rounded-lg text-white" style="background:#059669">+ Add Cert</button>` : ''}
+        </div>`
   ) : `<p class="text-slate-400 text-sm">No charter vendor set for this trip.</p>`;
 
   const documentsContent = `
@@ -691,6 +697,46 @@ async function renderTripDetail() {
       ${tabContent}
     </div>`;
 
+  const quickCertModal = `
+    <div id="quick-cert-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="font-semibold text-slate-900">Add Tax Exemption Certificate</h3>
+          <button onclick="closeModal('quick-cert-modal')" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <form id="quick-cert-form" class="p-5 space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">State *</label>
+              <input id="qc-state" name="state" type="text" maxlength="2" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 uppercase font-mono" required />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Certificate #</label>
+              <input name="cert_number" type="text" placeholder="NY-EX-2024-0001" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Issued Date</label>
+              <input name="issued_date" type="date" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Expiry Date</label>
+              <input name="expiry_date" type="date" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Certificate File (optional)</label>
+            <input name="cert_file" type="file" accept=".pdf,.jpg,.jpeg,.png" class="w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100" />
+          </div>
+        </form>
+        <div class="p-5 border-t border-slate-100 flex justify-end gap-3">
+          <button onclick="closeModal('quick-cert-modal')" class="px-4 py-2 text-sm text-slate-600">Cancel</button>
+          <button onclick="saveQuickCert(${id})" class="px-5 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Save Cert</button>
+        </div>
+      </div>
+    </div>`;
+
   const addAthleteModal = `
     <div id="add-athlete-manifest-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
@@ -713,10 +759,31 @@ async function renderTripDetail() {
       </div>
     </div>`;
 
-  return [content, addAthleteModal];
+  return [content, quickCertModal + addAthleteModal];
 }
 
 function openAddAthleteModal() { modal('add-athlete-manifest-modal'); }
+
+function openQuickCert(state) {
+  document.getElementById('qc-state').value = state;
+  document.getElementById('quick-cert-form').reset();
+  document.getElementById('qc-state').value = state;
+  modal('quick-cert-modal');
+}
+
+async function saveQuickCert(tripId) {
+  const form = document.getElementById('quick-cert-form');
+  const fd = new FormData(form);
+  if (!fd.get('state')) { toast('State is required', 'error'); return; }
+  try {
+    const r = await fetch('/api/tax-certs', { method: 'POST', body: fd });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Failed to save cert');
+    closeModal('quick-cert-modal');
+    toast('Certificate saved');
+    nav('trip-detail', { id: tripId, tab: 'documents' });
+  } catch (e) { toast(e.message, 'error'); }
+}
 
 async function addToManifest(tripId) {
   const athleteId = document.getElementById('manifest-add-athlete')?.value;
