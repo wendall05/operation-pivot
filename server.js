@@ -58,14 +58,16 @@ app.post('/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     req.session.userId = user.id;
     req.session.schoolId = user.school_id;
-    res.json({ id: user.id, name: user.name, email: user.email, role: user.role, school_id: user.school_id });
+    req.session.role = user.role;
+    req.session.sportId = user.sport_id || null;
+    res.json({ id: user.id, name: user.name, email: user.email, role: user.role, school_id: user.school_id, sport_id: user.sport_id || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/auth/logout', (req, res) => { req.session.destroy(); res.json({ ok: true }); });
 
 app.get('/api/auth/me', requireAuth, async (req, res) => {
-  const { rows } = await query('SELECT id,name,email,role,school_id,phone FROM users WHERE id=$1', [req.session.userId]);
+  const { rows } = await query('SELECT id,name,email,role,school_id,phone,sport_id FROM users WHERE id=$1', [req.session.userId]);
   if (!rows[0]) return res.status(401).json({ error: 'Not found' });
   res.json(rows[0]);
 });
@@ -113,7 +115,8 @@ app.get('/api/athletes', requireAuth, async (req, res) => {
   const { sport_id, status } = req.query;
   let sql = `SELECT a.*,s.name as sport_name FROM athletes a LEFT JOIN sports s ON s.id=a.sport_id WHERE a.school_id=$1`;
   const params = [req.session.schoolId];
-  if (sport_id) { sql += ` AND a.sport_id=$${params.length+1}`; params.push(sport_id); }
+  const effectiveSportId = req.session.role === 'coach' ? req.session.sportId : sport_id;
+  if (effectiveSportId) { sql += ` AND a.sport_id=$${params.length+1}`; params.push(effectiveSportId); }
   if (status) { sql += ` AND a.eligibility_status=$${params.length+1}`; params.push(status); }
   sql += ' ORDER BY s.name, a.name';
   const { rows } = await query(sql, params);
@@ -199,7 +202,8 @@ app.get('/api/trips', requireAuth, async (req, res) => {
     FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=$1`;
   const params = [req.session.schoolId];
   if (status) { sql += ` AND t.status=$${params.length+1}`; params.push(status); }
-  if (sport_id) { sql += ` AND t.sport_id=$${params.length+1}`; params.push(sport_id); }
+  const tripSportId = req.session.role === 'coach' ? req.session.sportId : sport_id;
+  if (tripSportId) { sql += ` AND t.sport_id=$${params.length+1}`; params.push(tripSportId); }
   sql += ' ORDER BY t.depart_date';
   const { rows } = await query(sql, params);
   res.json(rows);
@@ -346,13 +350,18 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const in60 = new Date(Date.now()+60*86400000).toISOString().split('T')[0];
 
+  const isCoach = req.session.role === 'coach';
+  const cSportId = req.session.sportId;
+  const sportFilter = isCoach && cSportId ? ` AND t.sport_id=${parseInt(cSportId)}` : '';
+  const athleteSportFilter = isCoach && cSportId ? ` AND a.sport_id=${parseInt(cSportId)}` : '';
+
   const [r1,r2,r3,r4,r5,r6,r7] = await Promise.all([
-    query(`SELECT COUNT(*) as n FROM trips WHERE school_id=$1 AND depart_date>=$2`, [sid,today]),
-    query(`SELECT COUNT(DISTINCT tm.id) as n FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2`, [sid,today]),
+    query(`SELECT COUNT(*) as n FROM trips WHERE school_id=$1 AND depart_date>=$2${sportFilter}`, [sid,today]),
+    query(`SELECT COUNT(DISTINCT tm.id) as n FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2${sportFilter}`, [sid,today]),
     query(`SELECT COUNT(*) as n FROM tax_certs WHERE school_id=$1 AND expiry_date BETWEEN $2 AND $3`, [sid,today,in60]),
-    query(`SELECT COUNT(*) as n FROM athletes WHERE school_id=$1 AND eligibility_status='ineligible'`, [sid]),
-    query(`SELECT t.*,s.name as sport_name,(SELECT COUNT(*) FROM trip_manifest tm WHERE tm.trip_id=t.id AND tm.status='confirmed') as manifest_count,(SELECT COUNT(*) FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id WHERE tm.trip_id=t.id AND tm.status='confirmed' AND a.eligibility_status!='eligible') as conflict_count FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=$1 AND t.depart_date>=$2 ORDER BY t.depart_date LIMIT 5`, [sid,today]),
-    query(`SELECT a.name as athlete_name,a.eligibility_status,a.eligibility_note,t.name as trip_name,t.depart_date,t.id as trip_id FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2 ORDER BY t.depart_date`, [sid,today]),
+    query(`SELECT COUNT(*) as n FROM athletes WHERE school_id=$1 AND eligibility_status='ineligible'${athleteSportFilter}`, [sid]),
+    query(`SELECT t.*,s.name as sport_name,(SELECT COUNT(*) FROM trip_manifest tm WHERE tm.trip_id=t.id AND tm.status='confirmed') as manifest_count,(SELECT COUNT(*) FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id WHERE tm.trip_id=t.id AND tm.status='confirmed' AND a.eligibility_status!='eligible') as conflict_count FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=$1 AND t.depart_date>=$2${sportFilter} ORDER BY t.depart_date LIMIT 5`, [sid,today]),
+    query(`SELECT a.name as athlete_name,a.eligibility_status,a.eligibility_note,t.name as trip_name,t.depart_date,t.id as trip_id FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2${sportFilter} ORDER BY t.depart_date`, [sid,today]),
     query(`SELECT al.*,u.name as user_name FROM activity_log al LEFT JOIN users u ON u.id=al.user_id WHERE al.school_id=$1 ORDER BY al.created_at DESC LIMIT 8`, [sid]),
   ]);
 

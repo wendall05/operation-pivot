@@ -132,6 +132,12 @@ async function initDb() {
 
   await query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS share_token TEXT UNIQUE`);
   await query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS per_diem_rate NUMERIC`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sport_id INTEGER REFERENCES sports(id)`);
+
+  await query(`
+    UPDATE users SET role='coach', sport_id=(SELECT id FROM sports WHERE school_id=users.school_id AND name='Men''s Basketball' LIMIT 1)
+    WHERE email='coach@operationpivot.demo' AND (role != 'coach' OR sport_id IS NULL)
+  `);
 
   const { rows } = await query('SELECT COUNT(*) as n FROM schools');
   if (parseInt(rows[0].n) > 0) return;
@@ -144,17 +150,17 @@ async function initDb() {
   );
   const schoolId = school.id;
 
-  await query(`INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6)`,
-    [schoolId, 'Marcus Webb', 'admin@operationpivot.demo', hash, 'admin', '(607) 555-0101']);
-  await query(`INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6)`,
-    [schoolId, 'Jordan Hayes', 'staff@operationpivot.demo', hash, 'staff', '(607) 555-0102']);
-  await query(`INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6)`,
-    [schoolId, 'Coach Davis', 'coach@operationpivot.demo', hash, 'staff', '(606) 555-0103']);
-
   const { rows: [mbb] } = await query(`INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES ($1,$2,$3,$4,$5) RETURNING id`, [schoolId,"Men's Basketball",'winter','mens','Coach Davis']);
   const { rows: [wbb] } = await query(`INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES ($1,$2,$3,$4,$5) RETURNING id`, [schoolId,"Women's Basketball",'winter','womens','Coach Rivera']);
   const { rows: [msoc] } = await query(`INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES ($1,$2,$3,$4,$5) RETURNING id`, [schoolId,"Men's Soccer",'fall','mens','Coach Thompson']);
   await query(`INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES ($1,$2,$3,$4,$5)`, [schoolId,"Women's Soccer",'fall','womens','Coach Martinez']);
+
+  await query(`INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [schoolId, 'Marcus Webb', 'admin@operationpivot.demo', hash, 'admin', '(607) 555-0101']);
+  await query(`INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [schoolId, 'Jordan Hayes', 'staff@operationpivot.demo', hash, 'staff', '(607) 555-0102']);
+  await query(`INSERT INTO users (school_id,name,email,password_hash,role,phone,sport_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [schoolId, 'Coach Davis', 'coach@operationpivot.demo', hash, 'coach', '(606) 555-0103', mbb.id]);
 
   const mbbAthletes = [
     ['Marcus Johnson','CSU-2201','JR','mens','eligible',null],
