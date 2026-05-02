@@ -567,15 +567,17 @@ async function renderTripDetail() {
         </div>
       </div>
 
-      <div class="bg-slate-50 rounded-xl p-4">
+      <div class="bg-slate-50 rounded-xl p-4" id="cert-status-block">
         <h3 class="font-semibold text-slate-800 text-sm mb-3">Tax Exemption Status</h3>
-        ${certStatus}
-        ${matchCert?.file_name ? `<div class="mt-3">
-          <a href="/api/tax-certs/${matchCert.id}/download" class="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-50 text-brand-700 text-xs font-medium rounded-lg hover:bg-brand-100">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download ${esc(matchCert.file_name)}
-          </a>
-        </div>` : ''}
+        <div id="cert-status-inner">
+          ${certStatus}
+          ${matchCert?.file_name ? `<div class="mt-3">
+            <a href="/api/tax-certs/${matchCert.id}/download" class="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-50 text-brand-700 text-xs font-medium rounded-lg hover:bg-brand-100">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download ${esc(matchCert.file_name)}
+            </a>
+          </div>` : ''}
+        </div>
       </div>
 
       <div class="bg-slate-50 rounded-xl p-4">
@@ -774,14 +776,27 @@ function openQuickCert(state) {
 async function saveQuickCert(tripId) {
   const form = document.getElementById('quick-cert-form');
   const fd = new FormData(form);
-  if (!fd.get('state')) { toast('State is required', 'error'); return; }
+  const state = fd.get('state');
+  if (!state) { toast('State is required', 'error'); return; }
   try {
     const r = await fetch('/api/tax-certs', { method: 'POST', body: fd });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || 'Failed to save cert');
     closeModal('quick-cert-modal');
     toast('Certificate saved');
-    nav('trip-detail', { id: tripId, tab: 'documents' });
+    // In-place update — swap just the cert status section, no page flash
+    const inner = document.getElementById('cert-status-inner');
+    if (inner) {
+      const certNum = form.querySelector('[name="cert_number"]')?.value || '';
+      const expiry = form.querySelector('[name="expiry_date"]')?.value || '';
+      const fileName = form.querySelector('[name="cert_file"]')?.files[0]?.name || '';
+      inner.innerHTML = `
+        <div class="flex items-center gap-2 text-sm text-emerald-700 font-medium">
+          <span class="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center text-xs">✓</span>
+          ${esc(state.toUpperCase())} cert on file${certNum ? ' — ' + esc(certNum) : ''}${expiry ? ' (expires ' + fmt(expiry) + ')' : ''}
+        </div>
+        ${fileName ? `<div class="mt-3"><span class="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-50 text-brand-700 text-xs font-medium rounded-lg">${esc(fileName)}</span></div>` : ''}`;
+    }
   } catch (e) { toast(e.message, 'error'); }
 }
 
