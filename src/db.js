@@ -140,10 +140,10 @@ function initDb() {
   // Users
   const hash = bcrypt.hashSync('pivot123', 10);
   db.prepare(`INSERT INTO users (school_id, name, email, password_hash, role, phone) VALUES (?, ?, ?, ?, ?, ?)`).run(
-    schoolId, 'Marcus Webb', 'ad@cortlandstate.edu', hash, 'admin', '(607) 555-0101'
+    schoolId, 'Marcus Webb', 'admin@operationpivot.demo', hash, 'admin', '(607) 555-0101'
   );
   db.prepare(`INSERT INTO users (school_id, name, email, password_hash, role, phone) VALUES (?, ?, ?, ?, ?, ?)`).run(
-    schoolId, 'Jordan Hayes', 'staff@cortlandstate.edu', hash, 'staff', '(607) 555-0102'
+    schoolId, 'Jordan Hayes', 'staff@operationpivot.demo', hash, 'staff', '(607) 555-0102'
   );
 
   // Sports

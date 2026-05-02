@@ -164,7 +164,7 @@ function renderLogin() {
           </div>
           <button id="login-btn" class="w-full py-2.5 rounded-lg text-white text-sm font-semibold transition-colors" style="background:#059669">Sign in</button>
         </div>
-        <p class="text-center text-xs text-slate-400 mt-5">Demo: ad@cortlandstate.edu / pivot123</p>
+        <p class="text-center text-xs text-slate-400 mt-5">Demo: admin@operationpivot.demo / pivot123</p>
       </div>
     </div>
   </div>`;

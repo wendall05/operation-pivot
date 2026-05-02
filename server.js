@@ -389,7 +389,7 @@ async function start() {
   await initDb();
   app.listen(PORT, () => {
     console.log(`[operation-pivot] running on :${PORT}`);
-    console.log(`  AD login: ad@cortlandstate.edu / pivot123`);
+    console.log(`  AD login: admin@operationpivot.demo / pivot123`);
   });
 }
 
