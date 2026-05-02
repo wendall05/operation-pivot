@@ -729,6 +729,10 @@ async function renderTripDetail() {
           </div>
         </div>
         ${conflicts.length > 0 ? `<div class="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-semibold rounded-full">⚠ ${conflicts.length} Conflict${conflicts.length>1?'s':''}</div>` : ''}
+        <button onclick="shareTrip(${id})" class="px-3 py-1.5 bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-200 flex items-center gap-1.5">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          Share
+        </button>
       </div>
 
       <div class="flex border-b border-slate-200 mb-5">
@@ -895,6 +899,43 @@ async function updateTrip(id) {
     toast('Trip updated');
     nav('trip-detail', { id, tab: 'details' });
   } catch (e) { toast(e.message, 'error'); }
+}
+
+async function shareTrip(id) {
+  try {
+    const { url } = await POST(`/api/trips/${id}/share`);
+    const existing = document.getElementById('share-modal');
+    if (existing) existing.remove();
+    const m = document.createElement('div');
+    m.id = 'share-modal';
+    m.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4';
+    m.innerHTML = `
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="font-semibold text-slate-900">Share Trip with Coach</h3>
+          <button onclick="document.getElementById('share-modal').remove()" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="p-5 space-y-4">
+          <p class="text-sm text-slate-600">Send this link to your coach. It shows the live manifest, cert status, and trip details — no login needed. Updates every 10 seconds.</p>
+          <div class="flex gap-2">
+            <input id="share-url" type="text" readonly value="${url}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-700 font-mono" onclick="this.select()" />
+            <button onclick="copyShareLink()" class="px-4 py-2 rounded-lg text-white text-sm font-semibold flex-shrink-0" style="background:#059669" id="copy-btn">Copy</button>
+          </div>
+          <a href="${url}" target="_blank" class="block text-center text-xs text-brand-600 hover:underline">Preview link →</a>
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+    m.addEventListener('click', e => { if (e.target === m) m.remove(); });
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function copyShareLink() {
+  const input = document.getElementById('share-url');
+  navigator.clipboard.writeText(input.value).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  });
 }
 
 async function deleteTrip(id) {
