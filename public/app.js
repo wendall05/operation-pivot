@@ -543,17 +543,59 @@ async function renderTripDetail() {
       </table>
     </div>`}`;
 
-  const certStatus = trip.charter_vendor ? (
-    matchCert
-      ? `<div class="flex items-center gap-2 text-sm text-emerald-700 font-medium"><span class="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center text-xs">✓</span> ${esc(trip.charter_state)} cert on file — ${esc(matchCert.cert_number||'')} (expires ${fmt(matchCert.expiry_date)})</div>`
-      : `<div class="flex items-center justify-between">
-          <div class="flex items-center gap-2 text-sm text-red-700 font-medium">
-            <span class="w-5 h-5 rounded-full bg-red-100 flex items-center justify-center text-xs">!</span>
-            No tax exemption cert on file for ${esc(trip.charter_state||'this state')}
-          </div>
-          ${S.user?.role === 'admin' ? `<button onclick="openQuickCert('${esc(trip.charter_state||'')}')" class="px-3 py-1.5 text-xs font-semibold rounded-lg text-white" style="background:#059669">+ Add Cert</button>` : ''}
-        </div>`
-  ) : `<p class="text-slate-400 text-sm">No charter vendor set for this trip.</p>`;
+  const today = new Date().toISOString().split('T')[0];
+  const certExpired = matchCert && matchCert.expiry_date && matchCert.expiry_date < today;
+  const certExpiring = matchCert && matchCert.expiry_date && !certExpired &&
+    matchCert.expiry_date <= new Date(Date.now() + 60*86400000).toISOString().split('T')[0];
+
+  function certRow(c) {
+    const exp = c.expiry_date && c.expiry_date < today;
+    const expiring = c.expiry_date && !exp && c.expiry_date <= new Date(Date.now()+60*86400000).toISOString().split('T')[0];
+    const color = exp ? 'text-red-700' : expiring ? 'text-amber-700' : 'text-emerald-700';
+    const bg = exp ? 'bg-red-100' : expiring ? 'bg-amber-100' : 'bg-emerald-100';
+    const icon = exp ? '✕' : expiring ? '!' : '✓';
+    const label = exp ? 'EXPIRED' : expiring ? 'EXPIRING SOON' : 'ACTIVE';
+    return `<div class="flex items-center justify-between py-2 border-b border-slate-200 last:border-0">
+      <div class="flex items-center gap-2">
+        <span class="w-5 h-5 rounded-full ${bg} ${color} flex items-center justify-center text-xs font-bold">${icon}</span>
+        <div>
+          <span class="text-sm font-semibold text-slate-800">${esc(c.state)}</span>
+          ${c.cert_number ? `<span class="text-slate-500 text-xs ml-1">— ${esc(c.cert_number)}</span>` : ''}
+          <span class="ml-2 text-xs font-semibold ${color}">${label}</span>
+          <div class="text-xs text-slate-400 mt-0.5">Expires ${fmt(c.expiry_date)}</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        ${c.file_name ? `<a href="/api/tax-certs/${c.id}/download" class="text-xs text-brand-600 hover:underline">↓ Download</a>` : ''}
+        ${S.user?.role === 'admin' ? `<button onclick="openQuickCert('${esc(c.state)}')" class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200">${exp ? 'Replace' : 'Renew'}</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  const charterStateCerts = certs.filter(c => c.state?.toUpperCase() === trip.charter_state?.toUpperCase());
+  const otherCerts = certs.filter(c => c.state?.toUpperCase() !== trip.charter_state?.toUpperCase());
+
+  let certStatusHtml = '';
+  if (!trip.charter_vendor) {
+    certStatusHtml = `<p class="text-slate-400 text-sm">No charter vendor set for this trip.</p>`;
+  } else if (charterStateCerts.length === 0) {
+    certStatusHtml = `<div class="flex items-center justify-between py-1">
+      <div class="flex items-center gap-2 text-sm text-red-700 font-medium">
+        <span class="w-5 h-5 rounded-full bg-red-100 flex items-center justify-center text-xs font-bold">!</span>
+        No cert on file for ${esc(trip.charter_state||'this state')}
+      </div>
+      ${S.user?.role === 'admin' ? `<button onclick="openQuickCert('${esc(trip.charter_state||'')}')" class="px-3 py-1.5 text-xs font-semibold rounded-lg text-white" style="background:#059669">+ Add Cert</button>` : ''}
+    </div>`;
+  } else {
+    certStatusHtml = charterStateCerts.map(certRow).join('');
+  }
+
+  if (otherCerts.length > 0) {
+    certStatusHtml += `<div class="mt-3 pt-3 border-t border-slate-200">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Other States on File</p>
+      ${otherCerts.map(certRow).join('')}
+    </div>`;
+  }
 
   const documentsContent = `
     <div class="space-y-5">
@@ -568,15 +610,12 @@ async function renderTripDetail() {
       </div>
 
       <div class="bg-slate-50 rounded-xl p-4" id="cert-status-block">
-        <h3 class="font-semibold text-slate-800 text-sm mb-3">Tax Exemption Status</h3>
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-semibold text-slate-800 text-sm">Tax Exemption Status</h3>
+          ${S.user?.role === 'admin' ? `<button onclick="openQuickCert('')" class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">+ Add for Different State</button>` : ''}
+        </div>
         <div id="cert-status-inner">
-          ${certStatus}
-          ${matchCert?.file_name ? `<div class="mt-3">
-            <a href="/api/tax-certs/${matchCert.id}/download" class="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-50 text-brand-700 text-xs font-medium rounded-lg hover:bg-brand-100">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Download ${esc(matchCert.file_name)}
-            </a>
-          </div>` : ''}
+          ${certStatusHtml}
         </div>
       </div>
 
