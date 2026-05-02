@@ -331,11 +331,12 @@ async function renderDashboard() {
           ${d.activity.length === 0 ? '<p class="text-slate-400 text-sm">No recent activity.</p>' : `
           <div class="space-y-3">
             ${d.activity.map(a => `
-              <div class="flex items-start gap-3">
+              <div class="${a.entity_id&&a.entity_type==='trip'?'cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded-lg transition-colors':''} flex items-start gap-3 py-0.5"
+                ${a.entity_id&&a.entity_type==='trip'?`onclick="nav('trip-detail',{id:${a.entity_id}})"`:''}>
                 <div class="w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0 ${a.action==='eligibility_change'?'bg-red-400':a.action==='roster_locked'?'bg-brand-500':'bg-slate-300'}"></div>
                 <div class="flex-1 min-w-0">
                   <p class="text-sm text-slate-700 leading-snug">${esc(a.detail||a.action)}</p>
-                  <p class="text-xs text-slate-400 mt-0.5">${ago(a.created_at)} ${a.user_name?'· '+esc(a.user_name):''}</p>
+                  <p class="text-xs text-slate-400 mt-0.5">${ago(a.created_at)} ${a.user_name?'· '+esc(a.user_name):''}${a.entity_id&&a.entity_type==='trip'?'<span class="ml-1 text-brand-400">→</span>':''}</p>
                 </div>
               </div>`).join('')}
           </div>`}
@@ -349,7 +350,16 @@ async function renderDashboard() {
 // ── Trips ─────────────────────────────────────────────────────────────────────
 async function renderTrips() {
   const [trips, sports] = await Promise.all([GET('/api/trips'), GET('/api/sports')]);
+  const statusFilter = S.params?.status || 'active';
 
+  const statusGroups = {
+    active: trips.filter(t => t.status !== 'completed'),
+    planning: trips.filter(t => t.status === 'planning'),
+    confirmed: trips.filter(t => t.status === 'confirmed'),
+    departed: trips.filter(t => t.status === 'departed'),
+    completed: trips.filter(t => t.status === 'completed'),
+  };
+  const displayTrips = statusGroups[statusFilter] || statusGroups.active;
   const upcoming = trips.filter(t => t.status !== 'completed');
   const completed = trips.filter(t => t.status === 'completed');
 
@@ -378,9 +388,17 @@ async function renderTrips() {
       </div>`;
   }
 
+  const tripFilterTabs = [
+    { key: 'active', label: 'All Active', count: statusGroups.active.length },
+    { key: 'planning', label: 'Planning', count: statusGroups.planning.length },
+    { key: 'confirmed', label: 'Confirmed', count: statusGroups.confirmed.length },
+    { key: 'departed', label: 'Departed', count: statusGroups.departed.length },
+    { key: 'completed', label: 'Completed', count: statusGroups.completed.length },
+  ];
+
   const content = `
     <div class="fade-in">
-      <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center justify-between mb-5">
         <div>
           <h1 class="text-xl font-bold text-slate-900">Trips</h1>
           <p class="text-slate-500 text-sm mt-0.5">${trips.length} total</p>
@@ -388,17 +406,18 @@ async function renderTrips() {
         <button onclick="modal('new-trip-modal')" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">+ New Trip</button>
       </div>
 
-      ${upcoming.length > 0 ? `
-        <div class="mb-6">
-          <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">Upcoming & Active</h2>
-          <div class="grid grid-cols-2 gap-4">${upcoming.map(tripCard).join('')}</div>
-        </div>` : '<div class="text-center py-12 text-slate-400 bg-white rounded-xl shadow-sm"><p class="text-lg font-medium mb-1">No trips yet</p><p class="text-sm">Create your first trip to get started.</p></div>'}
+      <div class="flex items-center gap-2 mb-5 flex-wrap">
+        ${tripFilterTabs.map(t => `
+          <button onclick="nav('trips',{status:'${t.key}'})"
+            class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${statusFilter===t.key?'bg-brand-600 text-white':'bg-white text-slate-600 hover:bg-slate-100 shadow-sm'}">
+            ${t.label}
+            <span class="ml-1 text-xs ${statusFilter===t.key?'opacity-75':'text-slate-400'}">${t.count}</span>
+          </button>`).join('')}
+      </div>
 
-      ${completed.length > 0 ? `
-        <div>
-          <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">Completed</h2>
-          <div class="grid grid-cols-2 gap-4">${completed.map(tripCard).join('')}</div>
-        </div>` : ''}
+      ${displayTrips.length > 0
+        ? `<div class="grid grid-cols-2 gap-4">${displayTrips.map(tripCard).join('')}</div>`
+        : '<div class="text-center py-12 text-slate-400 bg-white rounded-xl shadow-sm"><p class="text-lg font-medium mb-1">No trips here</p><p class="text-sm">Try a different filter or create a new trip.</p></div>'}
     </div>`;
 
   const modals = `
@@ -1154,10 +1173,12 @@ async function renderRoster() {
   const [athletes, sports] = await Promise.all([GET('/api/athletes'), GET('/api/sports')]);
   const filter = S.params?.filter || 'all';
   const sportFilter = S.params?.sport || '';
+  const search = (S.params?.search || '').toLowerCase();
 
   const filtered = athletes.filter(a => {
     if (filter !== 'all' && a.eligibility_status !== filter) return false;
     if (sportFilter && String(a.sport_id) !== String(sportFilter)) return false;
+    if (search && !a.name.toLowerCase().includes(search) && !(a.student_id||'').toLowerCase().includes(search)) return false;
     return true;
   });
 
@@ -1186,15 +1207,22 @@ async function renderRoster() {
 
       <div class="flex items-center gap-3 mb-5 flex-wrap">
         ${['all','eligible','ineligible','pending'].map(f => `
-          <button onclick="nav('roster',{filter:'${f}',sport:'${sportFilter}'})"
+          <button onclick="nav('roster',{filter:'${f}',sport:'${sportFilter}',search:'${esc(search)}'})"
             class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filter===f?'bg-brand-600 text-white':'bg-white text-slate-600 hover:bg-slate-100 shadow-sm'}">
             ${f==='all'?'All Athletes':f.charAt(0).toUpperCase()+f.slice(1)}
             <span class="ml-1 text-xs ${filter===f?'opacity-75':'text-slate-400'}">${counts[f]}</span>
           </button>`).join('')}
-        <select onchange="nav('roster',{filter:'${filter}',sport:this.value})" class="ml-auto px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
+        <select onchange="nav('roster',{filter:'${filter}',sport:this.value,search:'${esc(search)}'})" class="ml-auto px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
           <option value="">All Sports</option>
           ${sports.map(s => `<option value="${s.id}" ${String(s.id)===String(sportFilter)?'selected':''}>${esc(s.name)}</option>`).join('')}
         </select>
+      </div>
+      <div class="mb-4 relative">
+        <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="roster-search" type="text" value="${esc(search)}" placeholder="Search by name or student ID…"
+          oninput="rosterSearchDebounce(this.value)"
+          class="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        ${search ? `<button onclick="nav('roster',{filter:'${filter}',sport:'${sportFilter}',search:''})" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-lg leading-none">&times;</button>` : ''}
       </div>
 
       ${Object.keys(grouped).length === 0
@@ -1315,6 +1343,12 @@ async function renderRoster() {
     </div>`;
 
   return [content, modals];
+}
+
+let _rosterSearchTimer;
+function rosterSearchDebounce(val) {
+  clearTimeout(_rosterSearchTimer);
+  _rosterSearchTimer = setTimeout(() => nav('roster', { filter: S.params?.filter||'all', sport: S.params?.sport||'', search: val }), 300);
 }
 
 function openEditAthlete(id, name, sportId, studentId, year, elig, note) {
@@ -1513,7 +1547,7 @@ async function markSubmitted(id) {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 async function renderSettings() {
-  const [school, certs, users] = await Promise.all([GET('/api/school'), GET('/api/tax-certs'), GET('/api/users')]);
+  const [school, certs, users, sports] = await Promise.all([GET('/api/school'), GET('/api/tax-certs'), GET('/api/users'), GET('/api/sports')]);
 
   const today = new Date().toISOString().split('T')[0];
   const in60 = new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0];
@@ -1604,18 +1638,26 @@ async function renderSettings() {
               <th class="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase">Name</th>
               <th class="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase">Email</th>
               <th class="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase">Role</th>
+              <th class="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase">Sport</th>
               <th class="px-4 py-2"></th>
             </tr></thead>
             <tbody>
-              ${users.map(u => `
+              ${users.map(u => {
+                const sport = sports.find(s => s.id === u.sport_id);
+                return `
                 <tr class="border-b border-slate-100 last:border-0">
                   <td class="px-4 py-3 font-medium text-slate-800">${esc(u.name)}</td>
                   <td class="px-4 py-3 text-slate-500">${esc(u.email)}</td>
-                  <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-semibold ${u.role==='admin'?'bg-brand-100 text-brand-800':'bg-slate-100 text-slate-600'}">${esc(u.role)}</span></td>
-                  <td class="px-4 py-3 text-right">
-                    ${u.id === S.user.id ? '<span class="text-xs text-slate-400 px-2">You</span>' : S.user?.role === 'admin' ? actionIcon('delete', `deleteUser(${u.id})`) : ''}
+                  <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-semibold ${u.role==='admin'?'bg-brand-100 text-brand-800':u.role==='coach'?'bg-purple-100 text-purple-800':'bg-slate-100 text-slate-600'}">${esc(u.role)}</span></td>
+                  <td class="px-4 py-3 text-slate-500 text-xs">${sport ? esc(sport.name) : '<span class="text-slate-300">—</span>'}</td>
+                  <td class="px-4 py-3 text-right flex justify-end gap-1">
+                    ${u.id === S.user.id
+                      ? '<span class="text-xs text-slate-400 px-2">You</span>'
+                      : S.user?.role === 'admin'
+                        ? actionIcon('edit', `openEditUser(${u.id},'${esc(u.name)}','${esc(u.email)}','${u.role}',${u.sport_id||'null'})`) + actionIcon('delete', `deleteUser(${u.id})`)
+                        : ''}
                   </td>
-                </tr>`).join('')}
+                </tr>`;}).join('')}
             </tbody>
           </table>
         </div>
@@ -1682,17 +1724,73 @@ async function renderSettings() {
             <label class="block text-xs font-medium text-slate-600 mb-1">Password</label>
             <input id="u-pass" type="password" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
           </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-600 mb-1">Role</label>
-            <select id="u-role" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-              <option value="staff">Staff</option>
-              <option value="admin">Admin</option>
-            </select>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Role</label>
+              <select id="u-role" onchange="toggleUserSportField('u-sport-row',this.value)" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                <option value="staff">Staff</option>
+                <option value="coach">Coach</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div id="u-sport-row" class="hidden">
+              <label class="block text-xs font-medium text-slate-600 mb-1">Sport</label>
+              <select id="u-sport" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                <option value="">Select…</option>
+                ${sports.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+              </select>
+            </div>
           </div>
         </div>
         <div class="p-5 border-t border-slate-100 flex justify-end gap-3">
           <button onclick="closeModal('new-user-modal')" class="px-4 py-2 text-sm text-slate-600">Cancel</button>
           <button onclick="saveUser()" class="px-5 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Add User</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="edit-user-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="font-semibold text-slate-900">Edit User</h3>
+          <button onclick="closeModal('edit-user-modal')" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="p-5 space-y-3">
+          <input type="hidden" id="eu-id" />
+          <div id="eu-error" class="hidden p-3 bg-red-50 text-red-700 text-sm rounded-lg"></div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Name</label>
+            <input id="eu-name" type="text" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">Email</label>
+            <input id="eu-email" type="email" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-600 mb-1">New Password <span class="text-slate-400 font-normal">(leave blank to keep current)</span></label>
+            <input id="eu-pass" type="password" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Role</label>
+              <select id="eu-role" onchange="toggleUserSportField('eu-sport-row',this.value)" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                <option value="staff">Staff</option>
+                <option value="coach">Coach</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div id="eu-sport-row">
+              <label class="block text-xs font-medium text-slate-600 mb-1">Sport</label>
+              <select id="eu-sport" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                <option value="">None</option>
+                ${sports.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="p-5 border-t border-slate-100 flex justify-end gap-3">
+          <button onclick="closeModal('edit-user-modal')" class="px-4 py-2 text-sm text-slate-600">Cancel</button>
+          <button onclick="updateUser()" class="px-5 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Save Changes</button>
         </div>
       </div>
     </div>`;
@@ -1735,17 +1833,51 @@ async function deleteCert(id) {
   catch (e) { toast(e.message, 'error'); }
 }
 
+function toggleUserSportField(rowId, role) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  row.classList.toggle('hidden', role !== 'coach');
+}
+
 async function saveUser() {
   const name = document.getElementById('u-name').value.trim();
   const email = document.getElementById('u-email').value.trim();
   const password = document.getElementById('u-pass').value;
+  const role = document.getElementById('u-role').value;
   if (!name || !email || !password) { document.getElementById('u-error').textContent='All fields required'; document.getElementById('u-error').classList.remove('hidden'); return; }
   try {
-    await POST('/api/users', { name, email, password, role: document.getElementById('u-role').value });
+    await POST('/api/users', { name, email, password, role, sport_id: document.getElementById('u-sport')?.value || null });
     closeModal('new-user-modal');
     toast('User added');
     nav('settings');
   } catch (e) { document.getElementById('u-error').textContent = e.message; document.getElementById('u-error').classList.remove('hidden'); }
+}
+
+function openEditUser(id, name, email, role, sportId) {
+  document.getElementById('eu-id').value = id;
+  document.getElementById('eu-name').value = name;
+  document.getElementById('eu-email').value = email;
+  document.getElementById('eu-role').value = role;
+  document.getElementById('eu-sport').value = sportId || '';
+  document.getElementById('eu-pass').value = '';
+  document.getElementById('eu-error').classList.add('hidden');
+  toggleUserSportField('eu-sport-row', role);
+  modal('edit-user-modal');
+}
+
+async function updateUser() {
+  const id = document.getElementById('eu-id').value;
+  const name = document.getElementById('eu-name').value.trim();
+  const email = document.getElementById('eu-email').value.trim();
+  const role = document.getElementById('eu-role').value;
+  const password = document.getElementById('eu-pass').value;
+  if (!name || !email) { document.getElementById('eu-error').textContent='Name and email required'; document.getElementById('eu-error').classList.remove('hidden'); return; }
+  try {
+    await PUT(`/api/users/${id}`, { name, email, role, sport_id: document.getElementById('eu-sport')?.value || null, ...(password ? { password } : {}) });
+    closeModal('edit-user-modal');
+    toast('User updated');
+    nav('settings');
+  } catch (e) { document.getElementById('eu-error').textContent = e.message; document.getElementById('eu-error').classList.remove('hidden'); }
 }
 
 async function deleteUser(id) {

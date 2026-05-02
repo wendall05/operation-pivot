@@ -385,27 +385,28 @@ app.get('/api/activity', requireAuth, async (req, res) => {
 });
 
 app.get('/api/users', requireAuth, async (req, res) => {
-  const { rows } = await query('SELECT id,name,email,role,phone,created_at FROM users WHERE school_id=$1 ORDER BY name', [req.session.schoolId]);
+  const { rows } = await query('SELECT id,name,email,role,phone,sport_id,created_at FROM users WHERE school_id=$1 ORDER BY name', [req.session.schoolId]);
   res.json(rows);
 });
 
 app.post('/api/users', requireAdmin, async (req, res) => {
-  const { name, email, password, role, phone } = req.body;
+  const { name, email, password, role, phone, sport_id } = req.body;
   try {
-    const { rows } = await query('INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
-      [req.session.schoolId, name, email.toLowerCase(), bcrypt.hashSync(password,10), role||'staff', phone||null]);
+    const { rows } = await query('INSERT INTO users (school_id,name,email,password_hash,role,phone,sport_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+      [req.session.schoolId, name, email.toLowerCase(), bcrypt.hashSync(password,10), role||'staff', phone||null, (role==='coach'&&sport_id)||null]);
     res.json({ id: rows[0].id });
   } catch { res.status(400).json({ error: 'Email already in use' }); }
 });
 
 app.put('/api/users/:id', requireAdmin, async (req, res) => {
-  const { name, email, role, phone, password } = req.body;
+  const { name, email, role, phone, password, sport_id } = req.body;
+  const sid = (role === 'coach' && sport_id) ? sport_id : null;
   if (password) {
-    await query('UPDATE users SET name=$1,email=$2,role=$3,phone=$4,password_hash=$5 WHERE id=$6 AND school_id=$7',
-      [name, email.toLowerCase(), role, phone||null, bcrypt.hashSync(password,10), req.params.id, req.session.schoolId]);
+    await query('UPDATE users SET name=$1,email=$2,role=$3,phone=$4,password_hash=$5,sport_id=$6 WHERE id=$7 AND school_id=$8',
+      [name, email.toLowerCase(), role, phone||null, bcrypt.hashSync(password,10), sid, req.params.id, req.session.schoolId]);
   } else {
-    await query('UPDATE users SET name=$1,email=$2,role=$3,phone=$4 WHERE id=$5 AND school_id=$6',
-      [name, email.toLowerCase(), role, phone||null, req.params.id, req.session.schoolId]);
+    await query('UPDATE users SET name=$1,email=$2,role=$3,phone=$4,sport_id=$5 WHERE id=$6 AND school_id=$7',
+      [name, email.toLowerCase(), role, phone||null, sid, req.params.id, req.session.schoolId]);
   }
   res.json({ ok: true });
 });
