@@ -131,6 +131,7 @@ async function initDb() {
   `);
 
   await query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS share_token TEXT UNIQUE`);
+  await query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS per_diem_rate NUMERIC`);
 
   const { rows } = await query('SELECT COUNT(*) as n FROM schools');
   if (parseInt(rows[0].n) > 0) return;

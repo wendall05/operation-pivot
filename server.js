@@ -397,6 +397,12 @@ app.delete('/api/users/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.patch('/api/trips/:id/per-diem', requireAuth, async (req, res) => {
+  const { per_diem_rate } = req.body;
+  await query('UPDATE trips SET per_diem_rate=$1 WHERE id=$2 AND school_id=$3', [per_diem_rate || null, req.params.id, req.session.schoolId]);
+  res.json({ ok: true });
+});
+
 // ── Trip Share ────────────────────────────────────────────────────────────────
 app.post('/api/trips/:id/share', requireAuth, async (req, res) => {
   const { rows } = await query('SELECT share_token FROM trips WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
@@ -524,7 +530,8 @@ async function load(){
           \${trip.destination?'<div class="meta-row"><span class="meta-label">Destination</span><span class="meta-val">'+esc(trip.destination)+'</span></div>':''}
           \${trip.opponent?'<div class="meta-row"><span class="meta-label">Opponent</span><span class="meta-val">'+esc(trip.opponent)+'</span></div>':''}
           \${trip.charter_vendor?'<div class="meta-row"><span class="meta-label">Charter</span><span class="meta-val">'+esc(trip.charter_vendor)+'</span></div>':''}
-          \${trip.charter_amount?'<div class="meta-row"><span class="meta-label">Amount</span><span class="meta-val">$'+Number(trip.charter_amount).toLocaleString()+'</span></div>':''}
+          \${trip.charter_amount?'<div class="meta-row"><span class="meta-label">Charter Amount</span><span class="meta-val">$'+Number(trip.charter_amount).toLocaleString()+'</span></div>':''}
+          \${trip.per_diem_rate?'<div class="meta-row"><span class="meta-label">Per Diem</span><span class="meta-val" style="color:#059669">$'+Number(trip.per_diem_rate).toFixed(2)+'/day per athlete</span></div>':''}
         </div>
       </div>
       <div class="card">

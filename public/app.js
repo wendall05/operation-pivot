@@ -609,6 +609,16 @@ async function renderTripDetail() {
         </div>
       </div>
 
+      <div class="bg-slate-50 rounded-xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-semibold text-slate-800 text-sm">Per Diem</h3>
+          ${S.user?.role === 'admin' ? `<button onclick="editPerDiem(${id})" class="text-xs text-brand-600 font-medium hover:underline" id="per-diem-edit-btn">${trip.per_diem_rate ? 'Edit' : 'Set Rate'}</button>` : ''}
+        </div>
+        <div id="per-diem-display">
+          ${renderPerDiemDisplay(trip, manifest)}
+        </div>
+      </div>
+
       <div class="bg-slate-50 rounded-xl p-4" id="cert-status-block">
         <div class="flex items-center justify-between mb-3">
           <h3 class="font-semibold text-slate-800 text-sm">Tax Exemption Status</h3>
@@ -1707,6 +1717,74 @@ async function deleteUser(id) {
   if (!confirm('Remove this user?')) return;
   try { await DEL(`/api/users/${id}`); toast('User removed'); nav('settings'); }
   catch (e) { toast(e.message, 'error'); }
+}
+
+function renderPerDiemDisplay(trip, manifest) {
+  if (!trip.per_diem_rate) {
+    return `<p class="text-slate-400 text-sm">No per diem rate set for this trip.</p>`;
+  }
+  const rate = Number(trip.per_diem_rate);
+  const depart = trip.depart_date ? new Date(trip.depart_date) : null;
+  const ret = trip.return_date ? new Date(trip.return_date) : null;
+  const days = depart && ret ? Math.max(1, Math.round((ret - depart) / 86400000) + 1) : 1;
+  const perAthlete = rate * days;
+  const total = perAthlete * (manifest?.length || 0);
+  return `
+    <div class="grid grid-cols-2 gap-3 mb-3">
+      <div class="bg-white rounded-lg p-3 text-center">
+        <div class="text-lg font-bold text-slate-900">$${rate.toFixed(2)}</div>
+        <div class="text-xs text-slate-500">Per Day / Athlete</div>
+      </div>
+      <div class="bg-white rounded-lg p-3 text-center">
+        <div class="text-lg font-bold text-slate-900">${days}</div>
+        <div class="text-xs text-slate-500">Trip Day${days !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="bg-white rounded-lg p-3 text-center">
+        <div class="text-lg font-bold text-emerald-700">$${perAthlete.toFixed(2)}</div>
+        <div class="text-xs text-slate-500">Per Athlete Total</div>
+      </div>
+      <div class="bg-white rounded-lg p-3 text-center">
+        <div class="text-lg font-bold text-emerald-700">$${total.toFixed(2)}</div>
+        <div class="text-xs text-slate-500">Total Budget (${manifest?.length || 0} athletes)</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 px-3 py-2 bg-slate-100 rounded-lg">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      <span class="text-xs text-slate-500">Virtual card issuance via Stripe — <strong>coming soon</strong></span>
+    </div>`;
+}
+
+function editPerDiem(tripId) {
+  const display = document.getElementById('per-diem-display');
+  const btn = document.getElementById('per-diem-edit-btn');
+  const currentRate = display.querySelector('.text-lg')?.textContent?.replace('$','') || '';
+  display.innerHTML = `
+    <div class="flex items-center gap-2">
+      <div class="relative flex-1">
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-medium">$</span>
+        <input id="per-diem-input" type="number" min="0" step="0.01" value="${currentRate}"
+          placeholder="45.00"
+          class="w-full pl-7 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+          onkeydown="if(event.key==='Enter')savePerDiem(${tripId})" />
+      </div>
+      <span class="text-slate-400 text-sm">/day per athlete</span>
+      <button onclick="savePerDiem(${tripId})" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Save</button>
+      <button onclick="nav('trip-detail',{id:${tripId},tab:'documents'})" class="px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-100">Cancel</button>
+    </div>`;
+  btn.textContent = '';
+  document.getElementById('per-diem-input')?.focus();
+}
+
+async function savePerDiem(tripId) {
+  const val = document.getElementById('per-diem-input')?.value;
+  try {
+    await fetch(`/api/trips/${tripId}/per-diem`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ per_diem_rate: val || null })
+    });
+    toast('Per diem saved');
+    nav('trip-detail', { id: tripId, tab: 'documents' });
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 async function patchEligibility(id, status) {
