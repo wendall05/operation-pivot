@@ -137,6 +137,51 @@ app.delete('/api/athletes/:id', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.patch('/api/athletes/:id/eligibility', requireAuth, async (req, res) => {
+  const { eligibility_status, eligibility_note } = req.body;
+  const { rows: prev } = await query('SELECT name,eligibility_status FROM athletes WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
+  if (!prev[0]) return res.status(404).json({ error: 'Not found' });
+  await query('UPDATE athletes SET eligibility_status=$1,eligibility_note=$2,updated_at=NOW() WHERE id=$3 AND school_id=$4',
+    [eligibility_status, eligibility_note||null, req.params.id, req.session.schoolId]);
+  if (prev[0].eligibility_status !== eligibility_status)
+    await logActivity(req.session.schoolId, req.session.userId, 'eligibility_change',
+      `${prev[0].name}: ${prev[0].eligibility_status} → ${eligibility_status}`, 'athlete', parseInt(req.params.id));
+  res.json({ ok: true });
+});
+
+app.post('/api/athletes/import', requireAuth, upload.single('csv_file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const content = fs.readFileSync(req.file.path, 'utf8');
+    fs.unlinkSync(req.file.path);
+    const lines = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) return res.status(400).json({ error: 'CSV needs a header row and at least one data row' });
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+    const col = h => headers.indexOf(h);
+    if (col('name') === -1 || col('sport') === -1)
+      return res.status(400).json({ error: 'CSV must have "name" and "sport" columns' });
+    const { rows: allSports } = await query('SELECT id,name FROM sports WHERE school_id=$1', [req.session.schoolId]);
+    const sportMap = Object.fromEntries(allSports.map(s => [s.name.toLowerCase(), s.id]));
+    let imported = 0, skipped = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+      const name = cols[col('name')];
+      const sport_id = sportMap[(cols[col('sport')] || '').toLowerCase()];
+      if (!name || !sport_id) { skipped++; continue; }
+      await query(`INSERT INTO athletes (school_id,sport_id,name,student_id,year,gender,eligibility_status,eligibility_note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+        [req.session.schoolId, sport_id, name,
+         col('student_id') > -1 ? cols[col('student_id')] || null : null,
+         col('year') > -1 ? cols[col('year')] || null : null,
+         col('gender') > -1 ? cols[col('gender')] || null : null,
+         col('eligibility_status') > -1 ? cols[col('eligibility_status')] || 'eligible' : 'eligible',
+         col('eligibility_note') > -1 ? cols[col('eligibility_note')] || null : null]);
+      imported++;
+    }
+    await logActivity(req.session.schoolId, req.session.userId, 'roster_import', `CSV import: ${imported} athletes added`, null, null);
+    res.json({ imported, skipped });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Trips ─────────────────────────────────────────────────────────────────────
 app.get('/api/trips', requireAuth, async (req, res) => {
   const { status, sport_id } = req.query;

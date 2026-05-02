@@ -505,6 +505,7 @@ async function renderTripDetail() {
     <div class="flex items-center justify-between mb-3">
       <p class="text-sm text-slate-600">${manifest.length} athlete${manifest.length!==1?'s':''} on manifest</p>
       <div class="flex items-center gap-2">
+        <button onclick="printManifest(${id})" class="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200">🖨 Print</button>
         ${trip.roster_locked
           ? `<button onclick="unlockRoster(${id})" class="px-3 py-1.5 text-xs font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">🔓 Unlock Roster</button>`
           : `<button onclick="openAddAthleteModal()" class="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200">+ Add Athlete</button>
@@ -808,7 +809,10 @@ async function renderRoster() {
           <h1 class="text-xl font-bold text-slate-900">Roster</h1>
           <p class="text-slate-500 text-sm mt-0.5">${athletes.length} athletes across ${sports.length} sports</p>
         </div>
-        <button onclick="modal('new-athlete-modal')" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">+ Add Athlete</button>
+        <div class="flex items-center gap-2">
+          <button onclick="modal('import-csv-modal')" class="px-4 py-2 rounded-lg text-sm font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50">↑ Import CSV</button>
+          <button onclick="modal('new-athlete-modal')" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">+ Add Athlete</button>
+        </div>
       </div>
 
       <div class="flex items-center gap-3 mb-5 flex-wrap">
@@ -845,7 +849,12 @@ async function renderRoster() {
                       <td class="px-4 py-3 text-slate-500 font-mono text-xs">${esc(a.student_id||'—')}</td>
                       <td class="px-4 py-3 text-slate-600">${esc(a.year||'—')}</td>
                       <td class="px-4 py-3">
-                        ${eligBadge(a.eligibility_status)}
+                        <select onchange="patchEligibility(${a.id}, this.value)"
+                          class="text-xs font-semibold px-2 py-1 rounded-full border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-500 ${a.eligibility_status==='eligible'?'bg-emerald-100 text-emerald-800':a.eligibility_status==='ineligible'?'bg-red-100 text-red-800':'bg-amber-100 text-amber-700'}">
+                          <option value="eligible" ${a.eligibility_status==='eligible'?'selected':''}>eligible</option>
+                          <option value="ineligible" ${a.eligibility_status==='ineligible'?'selected':''}>ineligible</option>
+                          <option value="pending" ${a.eligibility_status==='pending'?'selected':''}>pending</option>
+                        </select>
                         ${a.eligibility_note ? `<div class="text-xs text-slate-400 mt-0.5">${esc(a.eligibility_note)}</div>` : ''}
                       </td>
                       <td class="px-4 py-3 text-right flex justify-end gap-1">
@@ -860,6 +869,29 @@ async function renderRoster() {
     </div>`;
 
   const modals = `
+    <div id="import-csv-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="font-semibold text-slate-900">Import Roster from CSV</h3>
+          <button onclick="closeModal('import-csv-modal')" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <div class="p-5 space-y-4">
+          <div class="p-3 bg-slate-50 rounded-lg text-xs text-slate-600">
+            <p class="font-semibold mb-1">Required columns: <code>name</code>, <code>sport</code></p>
+            <p>Optional: <code>student_id</code>, <code>year</code>, <code>gender</code>, <code>eligibility_status</code>, <code>eligibility_note</code></p>
+            <p class="mt-1 text-slate-400">Sport name must match exactly (e.g. "Men's Basketball")</p>
+          </div>
+          <div id="import-error" class="hidden p-3 bg-red-50 text-red-700 text-sm rounded-lg"></div>
+          <div id="import-result" class="hidden p-3 bg-emerald-50 text-emerald-700 text-sm rounded-lg"></div>
+          <input id="import-file" type="file" accept=".csv" class="w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100" />
+        </div>
+        <div class="p-5 border-t border-slate-100 flex justify-end gap-3">
+          <button onclick="closeModal('import-csv-modal')" class="px-4 py-2 text-sm text-slate-600">Cancel</button>
+          <button onclick="importCSVRoster()" class="px-5 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">Import</button>
+        </div>
+      </div>
+    </div>
+
     <div id="new-athlete-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
         <div class="p-5 border-b border-slate-100 flex items-center justify-between">
@@ -1351,6 +1383,84 @@ async function deleteUser(id) {
   if (!confirm('Remove this user?')) return;
   try { await DEL(`/api/users/${id}`); toast('User removed'); nav('settings'); }
   catch (e) { toast(e.message, 'error'); }
+}
+
+async function patchEligibility(id, status) {
+  try {
+    await fetch(`/api/athletes/${id}/eligibility`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eligibility_status: status })
+    });
+    toast(status === 'eligible' ? 'Marked eligible' : `Marked ${status}`);
+    nav('roster', S.params);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function printManifest(tripId) {
+  const [trip, manifest] = await Promise.all([GET(`/api/trips/${tripId}`), GET(`/api/trips/${tripId}/manifest`)]);
+  const school = S._school?.name || '';
+  const w = window.open('', '_blank', 'width=820,height=650');
+  w.document.write(`<!DOCTYPE html><html><head><title>Manifest — ${trip.name}</title>
+<style>
+  body{font-family:Arial,sans-serif;font-size:12px;margin:28px;color:#111}
+  h1{font-size:17px;margin:0 0 3px}
+  .meta{color:#555;font-size:11px;margin-bottom:18px;line-height:1.6}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th{background:#f3f3f3;border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+  td{border:1px solid #ddd;padding:7px 10px;vertical-align:top}
+  .conflict td{background:#fff5f5}
+  .badge{display:inline-block;padding:1px 7px;border-radius:20px;font-size:10px;font-weight:700}
+  .eligible{background:#d1fae5;color:#065f46}
+  .ineligible{background:#fee2e2;color:#991b1b}
+  .pending{background:#fef3c7;color:#92400e}
+  .note{color:#888;font-size:10px;margin-top:2px}
+  .footer{margin-top:20px;font-size:10px;color:#888;border-top:1px solid #ddd;padding-top:8px;display:flex;justify-content:space-between}
+  .print-btn{margin-top:16px;padding:6px 16px;background:#059669;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px}
+  @media print{.print-btn{display:none}}
+</style></head><body>
+<h1>${trip.name}</h1>
+<div class="meta">
+  ${school}${trip.sport_name ? ' &nbsp;·&nbsp; ' + trip.sport_name : ''} &nbsp;·&nbsp; Departs: ${trip.depart_date}${trip.return_date ? ' → ' + trip.return_date : ''}
+  ${trip.destination ? '<br>Destination: ' + trip.destination : ''}${trip.opponent ? ' &nbsp;vs&nbsp; ' + trip.opponent : ''}
+  ${trip.charter_vendor ? '<br>Charter: ' + trip.charter_vendor + (trip.charter_amount ? ' ($' + Number(trip.charter_amount).toLocaleString() + ')' : '') + (trip.charter_state ? ' — ' + trip.charter_state : '') : ''}
+  ${trip.roster_locked ? '<br>🔒 Roster Locked' : ''}
+</div>
+<table><thead><tr><th>#</th><th>Name</th><th>Student ID</th><th>Year</th><th>Eligibility</th></tr></thead><tbody>
+${manifest.map((m, i) => `<tr class="${m.eligibility_status !== 'eligible' ? 'conflict' : ''}">
+  <td>${i + 1}</td><td>${m.name}</td>
+  <td style="font-family:monospace">${m.student_id || '—'}</td>
+  <td>${m.year || '—'}</td>
+  <td><span class="badge ${m.eligibility_status}">${m.eligibility_status}</span>${m.eligibility_note ? '<div class="note">' + m.eligibility_note + '</div>' : ''}</td>
+</tr>`).join('')}
+</tbody></table>
+<div class="footer">
+  <span>Total: ${manifest.length} &nbsp;·&nbsp; Eligible: ${manifest.filter(m => m.eligibility_status === 'eligible').length} &nbsp;·&nbsp; Conflicts: ${manifest.filter(m => m.eligibility_status !== 'eligible').length}</span>
+  <span>Generated: ${new Date().toLocaleString()}</span>
+</div>
+<button class="print-btn" onclick="window.print()">Print</button>
+</body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 400);
+}
+
+async function importCSVRoster() {
+  const file = document.getElementById('import-file')?.files[0];
+  const errEl = document.getElementById('import-error');
+  const resEl = document.getElementById('import-result');
+  errEl.classList.add('hidden');
+  resEl.classList.add('hidden');
+  if (!file) { errEl.textContent = 'Select a CSV file first'; errEl.classList.remove('hidden'); return; }
+  const fd = new FormData();
+  fd.append('csv_file', file);
+  try {
+    const r = await fetch('/api/athletes/import', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Import failed');
+    resEl.textContent = `Imported ${d.imported} athletes${d.skipped > 0 ? ` (${d.skipped} skipped — unknown sport or blank name)` : ''}.`;
+    resEl.classList.remove('hidden');
+    setTimeout(() => { closeModal('import-csv-modal'); nav('roster', S.params); }, 1800);
+  } catch (e) { errEl.textContent = e.message; errEl.classList.remove('hidden'); }
 }
 
 // ── Bind Events ───────────────────────────────────────────────────────────────
