@@ -361,16 +361,17 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
 
   const isCoach = req.session.role === 'coach';
   const cSportId = req.session.sportId;
-  const sportFilter = isCoach && cSportId ? ` AND t.sport_id=${parseInt(cSportId)}` : '';
-  const athleteSportFilter = isCoach && cSportId ? ` AND a.sport_id=${parseInt(cSportId)}` : '';
+  const tripSportFilter = isCoach && cSportId ? ` AND sport_id=${parseInt(cSportId)}` : '';
+  const tripAliasSportFilter = isCoach && cSportId ? ` AND t.sport_id=${parseInt(cSportId)}` : '';
+  const athleteSportFilter = isCoach && cSportId ? ` AND sport_id=${parseInt(cSportId)}` : '';
 
   const [r1,r2,r3,r4,r5,r6,r7] = await Promise.all([
-    query(`SELECT COUNT(*) as n FROM trips WHERE school_id=$1 AND depart_date>=$2${sportFilter}`, [sid,today]),
-    query(`SELECT COUNT(DISTINCT tm.id) as n FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2${sportFilter}`, [sid,today]),
+    query(`SELECT COUNT(*) as n FROM trips WHERE school_id=$1 AND depart_date>=$2${tripSportFilter}`, [sid,today]),
+    query(`SELECT COUNT(DISTINCT tm.id) as n FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2${tripAliasSportFilter}`, [sid,today]),
     query(`SELECT COUNT(*) as n FROM tax_certs WHERE school_id=$1 AND expiry_date BETWEEN $2 AND $3`, [sid,today,in60]),
     query(`SELECT COUNT(*) as n FROM athletes WHERE school_id=$1 AND eligibility_status='ineligible'${athleteSportFilter}`, [sid]),
-    query(`SELECT t.*,s.name as sport_name,(SELECT COUNT(*) FROM trip_manifest tm WHERE tm.trip_id=t.id AND tm.status='confirmed') as manifest_count,(SELECT COUNT(*) FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id WHERE tm.trip_id=t.id AND tm.status='confirmed' AND a.eligibility_status!='eligible') as conflict_count FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=$1 AND t.depart_date>=$2${sportFilter} ORDER BY t.depart_date LIMIT 5`, [sid,today]),
-    query(`SELECT a.name as athlete_name,a.eligibility_status,a.eligibility_note,t.name as trip_name,t.depart_date,t.id as trip_id FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2${sportFilter} ORDER BY t.depart_date`, [sid,today]),
+    query(`SELECT t.*,s.name as sport_name,(SELECT COUNT(*) FROM trip_manifest tm WHERE tm.trip_id=t.id AND tm.status='confirmed') as manifest_count,(SELECT COUNT(*) FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id WHERE tm.trip_id=t.id AND tm.status='confirmed' AND a.eligibility_status!='eligible') as conflict_count FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=$1 AND t.depart_date>=$2${tripAliasSportFilter} ORDER BY t.depart_date LIMIT 5`, [sid,today]),
+    query(`SELECT a.name as athlete_name,a.eligibility_status,a.eligibility_note,t.name as trip_name,t.depart_date,t.id as trip_id FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2${tripAliasSportFilter} ORDER BY t.depart_date`, [sid,today]),
     query(`SELECT al.*,u.name as user_name FROM activity_log al LEFT JOIN users u ON u.id=al.user_id WHERE al.school_id=$1 ORDER BY al.created_at DESC LIMIT 8`, [sid]),
   ]);
 
