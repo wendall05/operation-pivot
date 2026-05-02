@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { initDb, getDb } = require('./src/db');
+const { query, initDb } = require('./src/db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,355 +31,321 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function logActivity(db, schoolId, userId, action, detail, entityType, entityId) {
+async function logActivity(schoolId, userId, action, detail, entityType, entityId) {
   try {
-    db.prepare(`INSERT INTO activity_log (school_id, user_id, action, detail, entity_type, entity_id) VALUES (?, ?, ?, ?, ?, ?)`).run(
-      schoolId, userId, action, detail, entityType || null, entityId || null
-    );
+    await query(`INSERT INTO activity_log (school_id,user_id,action,detail,entity_type,entity_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [schoolId, userId, action, detail, entityType||null, entityId||null]);
   } catch {}
 }
 
-// ── Auth ─────────────────────────────────────────────────────────────────────
-
-app.post('/auth/login', (req, res) => {
+// ── Auth ──────────────────────────────────────────────────────────────────────
+app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-  const db = getDb();
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim().toLowerCase());
-  if (!user || !bcrypt.compareSync(password, user.password_hash))
-    return res.status(401).json({ error: 'Invalid email or password' });
-  req.session.userId = user.id;
-  req.session.schoolId = user.school_id;
-  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, school_id: user.school_id });
+  try {
+    const { rows } = await query('SELECT * FROM users WHERE email=$1', [email.trim().toLowerCase()]);
+    const user = rows[0];
+    if (!user || !bcrypt.compareSync(password, user.password_hash))
+      return res.status(401).json({ error: 'Invalid email or password' });
+    req.session.userId = user.id;
+    req.session.schoolId = user.school_id;
+    res.json({ id: user.id, name: user.name, email: user.email, role: user.role, school_id: user.school_id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/auth/logout', (req, res) => { req.session.destroy(); res.json({ ok: true }); });
 
-app.get('/api/auth/me', requireAuth, (req, res) => {
-  const user = getDb().prepare('SELECT id, name, email, role, school_id, phone FROM users WHERE id = ?').get(req.session.userId);
-  if (!user) return res.status(401).json({ error: 'Not found' });
-  res.json(user);
+app.get('/api/auth/me', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT id,name,email,role,school_id,phone FROM users WHERE id=$1', [req.session.userId]);
+  if (!rows[0]) return res.status(401).json({ error: 'Not found' });
+  res.json(rows[0]);
 });
 
 // ── School ────────────────────────────────────────────────────────────────────
-
-app.get('/api/school', requireAuth, (req, res) => {
-  res.json(getDb().prepare('SELECT * FROM schools WHERE id = ?').get(req.session.schoolId) || {});
+app.get('/api/school', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT * FROM schools WHERE id=$1', [req.session.schoolId]);
+  res.json(rows[0] || {});
 });
 
-app.put('/api/school', requireAuth, (req, res) => {
+app.put('/api/school', requireAuth, async (req, res) => {
   const { name, division, state, ein, address, phone, website } = req.body;
-  getDb().prepare(`UPDATE schools SET name=?,division=?,state=?,ein=?,address=?,phone=?,website=? WHERE id=?`).run(
-    name, division, state, ein, address, phone, website, req.session.schoolId
-  );
+  await query(`UPDATE schools SET name=$1,division=$2,state=$3,ein=$4,address=$5,phone=$6,website=$7 WHERE id=$8`,
+    [name, division, state, ein, address, phone, website, req.session.schoolId]);
   res.json({ ok: true });
 });
 
 // ── Sports ────────────────────────────────────────────────────────────────────
-
-app.get('/api/sports', requireAuth, (req, res) => {
-  res.json(getDb().prepare('SELECT * FROM sports WHERE school_id=? ORDER BY name').all(req.session.schoolId));
+app.get('/api/sports', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT * FROM sports WHERE school_id=$1 ORDER BY name', [req.session.schoolId]);
+  res.json(rows);
 });
 
-app.post('/api/sports', requireAuth, (req, res) => {
+app.post('/api/sports', requireAuth, async (req, res) => {
   const { name, season, gender, head_coach } = req.body;
-  const r = getDb().prepare('INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES (?,?,?,?,?)').run(
-    req.session.schoolId, name, season, gender, head_coach
-  );
-  res.json({ id: r.lastInsertRowid });
+  const { rows } = await query('INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [req.session.schoolId, name, season, gender, head_coach]);
+  res.json({ id: rows[0].id });
 });
 
-app.put('/api/sports/:id', requireAuth, (req, res) => {
+app.put('/api/sports/:id', requireAuth, async (req, res) => {
   const { name, season, gender, head_coach } = req.body;
-  getDb().prepare('UPDATE sports SET name=?,season=?,gender=?,head_coach=? WHERE id=? AND school_id=?').run(
-    name, season, gender, head_coach, req.params.id, req.session.schoolId
-  );
+  await query('UPDATE sports SET name=$1,season=$2,gender=$3,head_coach=$4 WHERE id=$5 AND school_id=$6',
+    [name, season, gender, head_coach, req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
-app.delete('/api/sports/:id', requireAuth, (req, res) => {
-  getDb().prepare('DELETE FROM sports WHERE id=? AND school_id=?').run(req.params.id, req.session.schoolId);
+app.delete('/api/sports/:id', requireAuth, async (req, res) => {
+  await query('DELETE FROM sports WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
 // ── Athletes ──────────────────────────────────────────────────────────────────
-
-app.get('/api/athletes', requireAuth, (req, res) => {
+app.get('/api/athletes', requireAuth, async (req, res) => {
   const { sport_id, status } = req.query;
-  let sql = `SELECT a.*, s.name as sport_name FROM athletes a LEFT JOIN sports s ON s.id=a.sport_id WHERE a.school_id=?`;
+  let sql = `SELECT a.*,s.name as sport_name FROM athletes a LEFT JOIN sports s ON s.id=a.sport_id WHERE a.school_id=$1`;
   const params = [req.session.schoolId];
-  if (sport_id) { sql += ' AND a.sport_id=?'; params.push(sport_id); }
-  if (status) { sql += ' AND a.eligibility_status=?'; params.push(status); }
+  if (sport_id) { sql += ` AND a.sport_id=$${params.length+1}`; params.push(sport_id); }
+  if (status) { sql += ` AND a.eligibility_status=$${params.length+1}`; params.push(status); }
   sql += ' ORDER BY s.name, a.name';
-  res.json(getDb().prepare(sql).all(...params));
+  const { rows } = await query(sql, params);
+  res.json(rows);
 });
 
-app.post('/api/athletes', requireAuth, (req, res) => {
+app.post('/api/athletes', requireAuth, async (req, res) => {
   const { sport_id, name, student_id, dob, gender, year, eligibility_status, eligibility_note } = req.body;
-  const db = getDb();
-  const r = db.prepare(`INSERT INTO athletes (school_id,sport_id,name,student_id,dob,gender,year,eligibility_status,eligibility_note) VALUES (?,?,?,?,?,?,?,?,?)`).run(
-    req.session.schoolId, sport_id, name, student_id, dob, gender, year, eligibility_status || 'eligible', eligibility_note
-  );
-  logActivity(db, req.session.schoolId, req.session.userId, 'athlete_added', `Added: ${name}`, 'athlete', r.lastInsertRowid);
-  res.json({ id: r.lastInsertRowid });
+  const { rows } = await query(`INSERT INTO athletes (school_id,sport_id,name,student_id,dob,gender,year,eligibility_status,eligibility_note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    [req.session.schoolId, sport_id, name, student_id, dob, gender, year, eligibility_status||'eligible', eligibility_note]);
+  await logActivity(req.session.schoolId, req.session.userId, 'athlete_added', `Added: ${name}`, 'athlete', rows[0].id);
+  res.json({ id: rows[0].id });
 });
 
-app.put('/api/athletes/:id', requireAuth, (req, res) => {
+app.put('/api/athletes/:id', requireAuth, async (req, res) => {
   const { sport_id, name, student_id, dob, gender, year, eligibility_status, eligibility_note } = req.body;
-  const db = getDb();
-  const prev = db.prepare('SELECT * FROM athletes WHERE id=? AND school_id=?').get(req.params.id, req.session.schoolId);
-  if (!prev) return res.status(404).json({ error: 'Not found' });
-  db.prepare(`UPDATE athletes SET sport_id=?,name=?,student_id=?,dob=?,gender=?,year=?,eligibility_status=?,eligibility_note=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND school_id=?`).run(
-    sport_id, name, student_id, dob, gender, year, eligibility_status, eligibility_note, req.params.id, req.session.schoolId
-  );
-  if (prev.eligibility_status !== eligibility_status) {
-    logActivity(db, req.session.schoolId, req.session.userId, 'eligibility_change',
-      `${name}: ${prev.eligibility_status} → ${eligibility_status}${eligibility_note ? ' — ' + eligibility_note : ''}`, 'athlete', req.params.id);
-  }
+  const { rows: prev } = await query('SELECT * FROM athletes WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
+  if (!prev[0]) return res.status(404).json({ error: 'Not found' });
+  await query(`UPDATE athletes SET sport_id=$1,name=$2,student_id=$3,dob=$4,gender=$5,year=$6,eligibility_status=$7,eligibility_note=$8,updated_at=NOW() WHERE id=$9 AND school_id=$10`,
+    [sport_id, name, student_id, dob, gender, year, eligibility_status, eligibility_note, req.params.id, req.session.schoolId]);
+  if (prev[0].eligibility_status !== eligibility_status)
+    await logActivity(req.session.schoolId, req.session.userId, 'eligibility_change',
+      `${name}: ${prev[0].eligibility_status} → ${eligibility_status}${eligibility_note?' — '+eligibility_note:''}`, 'athlete', req.params.id);
   res.json({ ok: true });
 });
 
-app.delete('/api/athletes/:id', requireAuth, (req, res) => {
-  getDb().prepare('DELETE FROM athletes WHERE id=? AND school_id=?').run(req.params.id, req.session.schoolId);
+app.delete('/api/athletes/:id', requireAuth, async (req, res) => {
+  await query('DELETE FROM athletes WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
 // ── Trips ─────────────────────────────────────────────────────────────────────
-
-app.get('/api/trips', requireAuth, (req, res) => {
+app.get('/api/trips', requireAuth, async (req, res) => {
   const { status, sport_id } = req.query;
-  let sql = `SELECT t.*, s.name as sport_name,
+  let sql = `SELECT t.*,s.name as sport_name,
     (SELECT COUNT(*) FROM trip_manifest tm WHERE tm.trip_id=t.id AND tm.status='confirmed') as manifest_count,
     (SELECT COUNT(*) FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id WHERE tm.trip_id=t.id AND tm.status='confirmed' AND a.eligibility_status!='eligible') as conflict_count
-    FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=?`;
+    FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=$1`;
   const params = [req.session.schoolId];
-  if (status) { sql += ' AND t.status=?'; params.push(status); }
-  if (sport_id) { sql += ' AND t.sport_id=?'; params.push(sport_id); }
+  if (status) { sql += ` AND t.status=$${params.length+1}`; params.push(status); }
+  if (sport_id) { sql += ` AND t.sport_id=$${params.length+1}`; params.push(sport_id); }
   sql += ' ORDER BY t.depart_date';
-  res.json(getDb().prepare(sql).all(...params));
+  const { rows } = await query(sql, params);
+  res.json(rows);
 });
 
-app.post('/api/trips', requireAuth, (req, res) => {
+app.post('/api/trips', requireAuth, async (req, res) => {
   const { sport_id, name, destination, opponent, event_type, depart_date, return_date, charter_vendor, charter_contact, charter_amount, charter_state, notes } = req.body;
-  const db = getDb();
-  const r = db.prepare(`INSERT INTO trips (school_id,sport_id,name,destination,opponent,event_type,depart_date,return_date,charter_vendor,charter_contact,charter_amount,charter_state,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-    req.session.schoolId, sport_id, name, destination, opponent, event_type || 'game', depart_date, return_date,
-    charter_vendor, charter_contact, charter_amount || null, charter_state, notes
-  );
-  logActivity(db, req.session.schoolId, req.session.userId, 'trip_created', `Created: ${name}`, 'trip', r.lastInsertRowid);
-  res.json({ id: r.lastInsertRowid });
+  const { rows } = await query(`INSERT INTO trips (school_id,sport_id,name,destination,opponent,event_type,depart_date,return_date,charter_vendor,charter_contact,charter_amount,charter_state,notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+    [req.session.schoolId, sport_id, name, destination, opponent, event_type||'game', depart_date, return_date||null, charter_vendor||null, charter_contact||null, charter_amount||null, charter_state||null, notes||null]);
+  await logActivity(req.session.schoolId, req.session.userId, 'trip_created', `Created: ${name}`, 'trip', rows[0].id);
+  res.json({ id: rows[0].id });
 });
 
-app.get('/api/trips/:id', requireAuth, (req, res) => {
-  const trip = getDb().prepare(`SELECT t.*, s.name as sport_name FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.id=? AND t.school_id=?`).get(req.params.id, req.session.schoolId);
-  if (!trip) return res.status(404).json({ error: 'Not found' });
-  res.json(trip);
+app.get('/api/trips/:id', requireAuth, async (req, res) => {
+  const { rows } = await query(`SELECT t.*,s.name as sport_name FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.id=$1 AND t.school_id=$2`, [req.params.id, req.session.schoolId]);
+  if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+  res.json(rows[0]);
 });
 
-app.put('/api/trips/:id', requireAuth, (req, res) => {
+app.put('/api/trips/:id', requireAuth, async (req, res) => {
   const { sport_id, name, destination, opponent, event_type, depart_date, return_date, charter_vendor, charter_contact, charter_amount, charter_state, status, notes } = req.body;
-  getDb().prepare(`UPDATE trips SET sport_id=?,name=?,destination=?,opponent=?,event_type=?,depart_date=?,return_date=?,charter_vendor=?,charter_contact=?,charter_amount=?,charter_state=?,status=?,notes=? WHERE id=? AND school_id=?`).run(
-    sport_id, name, destination, opponent, event_type, depart_date, return_date, charter_vendor, charter_contact,
-    charter_amount || null, charter_state, status, notes, req.params.id, req.session.schoolId
-  );
+  await query(`UPDATE trips SET sport_id=$1,name=$2,destination=$3,opponent=$4,event_type=$5,depart_date=$6,return_date=$7,charter_vendor=$8,charter_contact=$9,charter_amount=$10,charter_state=$11,status=$12,notes=$13 WHERE id=$14 AND school_id=$15`,
+    [sport_id, name, destination||null, opponent||null, event_type, depart_date, return_date||null, charter_vendor||null, charter_contact||null, charter_amount||null, charter_state||null, status, notes||null, req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
-app.delete('/api/trips/:id', requireAuth, (req, res) => {
-  const db = getDb();
-  db.prepare('DELETE FROM trip_manifest WHERE trip_id=?').run(req.params.id);
-  db.prepare('DELETE FROM trips WHERE id=? AND school_id=?').run(req.params.id, req.session.schoolId);
+app.delete('/api/trips/:id', requireAuth, async (req, res) => {
+  await query('DELETE FROM trip_manifest WHERE trip_id=$1', [req.params.id]);
+  await query('DELETE FROM trips WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
-app.post('/api/trips/:id/lock', requireAuth, (req, res) => {
-  const db = getDb();
-  db.prepare(`UPDATE trips SET roster_locked=1,roster_locked_at=CURRENT_TIMESTAMP,status='confirmed' WHERE id=? AND school_id=?`).run(req.params.id, req.session.schoolId);
-  const trip = db.prepare('SELECT name FROM trips WHERE id=?').get(req.params.id);
-  logActivity(db, req.session.schoolId, req.session.userId, 'roster_locked', `Roster locked: ${trip?.name}`, 'trip', req.params.id);
+app.post('/api/trips/:id/lock', requireAuth, async (req, res) => {
+  await query(`UPDATE trips SET roster_locked=1,roster_locked_at=NOW(),status='confirmed' WHERE id=$1 AND school_id=$2`, [req.params.id, req.session.schoolId]);
+  const { rows } = await query('SELECT name FROM trips WHERE id=$1', [req.params.id]);
+  await logActivity(req.session.schoolId, req.session.userId, 'roster_locked', `Roster locked: ${rows[0]?.name}`, 'trip', req.params.id);
   res.json({ ok: true });
 });
 
-app.post('/api/trips/:id/unlock', requireAuth, (req, res) => {
-  getDb().prepare(`UPDATE trips SET roster_locked=0,roster_locked_at=NULL WHERE id=? AND school_id=?`).run(req.params.id, req.session.schoolId);
+app.post('/api/trips/:id/unlock', requireAuth, async (req, res) => {
+  await query(`UPDATE trips SET roster_locked=0,roster_locked_at=NULL WHERE id=$1 AND school_id=$2`, [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
 // ── Manifest ──────────────────────────────────────────────────────────────────
-
-app.get('/api/trips/:id/manifest', requireAuth, (req, res) => {
-  const rows = getDb().prepare(`
-    SELECT tm.*, a.name, a.student_id, a.year, a.gender, a.eligibility_status, a.eligibility_note, s.name as sport_name
-    FROM trip_manifest tm
-    JOIN athletes a ON a.id=tm.athlete_id
-    LEFT JOIN sports s ON s.id=a.sport_id
-    WHERE tm.trip_id=? AND tm.status='confirmed'
-    ORDER BY a.name
-  `).all(req.params.id);
+app.get('/api/trips/:id/manifest', requireAuth, async (req, res) => {
+  const { rows } = await query(`
+    SELECT tm.*,a.name,a.student_id,a.year,a.gender,a.eligibility_status,a.eligibility_note,s.name as sport_name
+    FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id LEFT JOIN sports s ON s.id=a.sport_id
+    WHERE tm.trip_id=$1 AND tm.status='confirmed' ORDER BY a.name`, [req.params.id]);
   res.json(rows);
 });
 
-app.post('/api/trips/:id/manifest', requireAuth, (req, res) => {
+app.post('/api/trips/:id/manifest', requireAuth, async (req, res) => {
   const { athlete_id } = req.body;
   try {
-    getDb().prepare('INSERT OR REPLACE INTO trip_manifest (trip_id,athlete_id,status) VALUES (?,?,?)').run(req.params.id, athlete_id, 'confirmed');
+    await query('INSERT INTO trip_manifest (trip_id,athlete_id,status) VALUES ($1,$2,$3) ON CONFLICT (trip_id,athlete_id) DO UPDATE SET status=$3', [req.params.id, athlete_id, 'confirmed']);
     res.json({ ok: true });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.delete('/api/trips/:id/manifest/:athleteId', requireAuth, (req, res) => {
-  const db = getDb();
-  const a = db.prepare('SELECT name FROM athletes WHERE id=?').get(req.params.athleteId);
-  db.prepare(`UPDATE trip_manifest SET status='removed',removed_at=CURRENT_TIMESTAMP WHERE trip_id=? AND athlete_id=?`).run(req.params.id, req.params.athleteId);
-  if (a) logActivity(db, req.session.schoolId, req.session.userId, 'manifest_removed', `${a.name} removed from manifest`, 'trip', req.params.id);
+app.delete('/api/trips/:id/manifest/:athleteId', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT name FROM athletes WHERE id=$1', [req.params.athleteId]);
+  await query(`UPDATE trip_manifest SET status='removed',removed_at=NOW() WHERE trip_id=$1 AND athlete_id=$2`, [req.params.id, req.params.athleteId]);
+  if (rows[0]) await logActivity(req.session.schoolId, req.session.userId, 'manifest_removed', `${rows[0].name} removed from manifest`, 'trip', req.params.id);
   res.json({ ok: true });
 });
 
 // ── Tax Certs ─────────────────────────────────────────────────────────────────
-
-app.get('/api/tax-certs', requireAuth, (req, res) => {
-  res.json(getDb().prepare('SELECT * FROM tax_certs WHERE school_id=? ORDER BY state').all(req.session.schoolId));
+app.get('/api/tax-certs', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT * FROM tax_certs WHERE school_id=$1 ORDER BY state', [req.session.schoolId]);
+  res.json(rows);
 });
 
-app.post('/api/tax-certs', requireAuth, upload.single('cert_file'), (req, res) => {
+app.post('/api/tax-certs', requireAuth, upload.single('cert_file'), async (req, res) => {
   const { state, cert_number, issued_date, expiry_date } = req.body;
-  const db = getDb();
   const file = req.file;
-  const r = db.prepare('INSERT INTO tax_certs (school_id,state,cert_number,issued_date,expiry_date,file_name,file_path) VALUES (?,?,?,?,?,?,?)').run(
-    req.session.schoolId, state, cert_number, issued_date, expiry_date,
-    file ? file.originalname : null, file ? file.path : null
-  );
-  logActivity(db, req.session.schoolId, req.session.userId, 'cert_uploaded', `Tax cert uploaded: ${state}`, 'cert', r.lastInsertRowid);
-  res.json({ id: r.lastInsertRowid });
+  const { rows } = await query('INSERT INTO tax_certs (school_id,state,cert_number,issued_date,expiry_date,file_name,file_path) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+    [req.session.schoolId, state, cert_number||null, issued_date||null, expiry_date||null, file?.originalname||null, file?.path||null]);
+  await logActivity(req.session.schoolId, req.session.userId, 'cert_uploaded', `Tax cert uploaded: ${state}`, 'cert', rows[0].id);
+  res.json({ id: rows[0].id });
 });
 
-app.delete('/api/tax-certs/:id', requireAuth, (req, res) => {
-  const db = getDb();
-  const cert = db.prepare('SELECT * FROM tax_certs WHERE id=? AND school_id=?').get(req.params.id, req.session.schoolId);
-  if (cert?.file_path && fs.existsSync(cert.file_path)) fs.unlinkSync(cert.file_path);
-  db.prepare('DELETE FROM tax_certs WHERE id=? AND school_id=?').run(req.params.id, req.session.schoolId);
+app.delete('/api/tax-certs/:id', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT * FROM tax_certs WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
+  if (rows[0]?.file_path && fs.existsSync(rows[0].file_path)) fs.unlinkSync(rows[0].file_path);
+  await query('DELETE FROM tax_certs WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
-app.get('/api/tax-certs/:id/download', requireAuth, (req, res) => {
-  const cert = getDb().prepare('SELECT * FROM tax_certs WHERE id=? AND school_id=?').get(req.params.id, req.session.schoolId);
-  if (!cert?.file_path || !fs.existsSync(cert.file_path)) return res.status(404).json({ error: 'File not found' });
-  res.download(cert.file_path, cert.file_name);
+app.get('/api/tax-certs/:id/download', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT * FROM tax_certs WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
+  if (!rows[0]?.file_path || !fs.existsSync(rows[0].file_path)) return res.status(404).json({ error: 'File not found' });
+  res.download(rows[0].file_path, rows[0].file_name);
 });
 
 // ── Reports ───────────────────────────────────────────────────────────────────
-
-app.get('/api/reports', requireAuth, (req, res) => {
-  res.json(getDb().prepare(`SELECT r.*, s.name as sport_name FROM gsa_reports r LEFT JOIN sports s ON s.id=r.sport_id WHERE r.school_id=? ORDER BY r.generated_at DESC`).all(req.session.schoolId));
+app.get('/api/reports', requireAuth, async (req, res) => {
+  const { rows } = await query(`SELECT r.*,s.name as sport_name FROM gsa_reports r LEFT JOIN sports s ON s.id=r.sport_id WHERE r.school_id=$1 ORDER BY r.generated_at DESC`, [req.session.schoolId]);
+  res.json(rows);
 });
 
-app.post('/api/reports/generate', requireAuth, (req, res) => {
+app.post('/api/reports/generate', requireAuth, async (req, res) => {
   const { sport_id, academic_year, report_type } = req.body;
-  const db = getDb();
-  let athletes;
+  let athleteRows;
   if (sport_id) {
-    athletes = db.prepare('SELECT a.*, s.name as sport_name, s.gender as sport_gender FROM athletes a JOIN sports s ON s.id=a.sport_id WHERE a.school_id=? AND a.sport_id=?').all(req.session.schoolId, sport_id);
+    const { rows } = await query('SELECT a.*,s.name as sport_name,s.gender as sport_gender FROM athletes a JOIN sports s ON s.id=a.sport_id WHERE a.school_id=$1 AND a.sport_id=$2', [req.session.schoolId, sport_id]);
+    athleteRows = rows;
   } else {
-    athletes = db.prepare('SELECT a.*, s.name as sport_name, s.gender as sport_gender FROM athletes a JOIN sports s ON s.id=a.sport_id WHERE a.school_id=?').all(req.session.schoolId);
+    const { rows } = await query('SELECT a.*,s.name as sport_name,s.gender as sport_gender FROM athletes a JOIN sports s ON s.id=a.sport_id WHERE a.school_id=$1', [req.session.schoolId]);
+    athleteRows = rows;
   }
   const report_data = JSON.stringify({
-    generated: new Date().toISOString(), academic_year, report_type: report_type || 'eada',
-    athletes: athletes.map(a => ({ name: a.name, student_id: a.student_id, sport: a.sport_name, gender: a.sport_gender || a.gender, year: a.year, eligibility: a.eligibility_status })),
-    summary: { total: athletes.length, eligible: athletes.filter(a => a.eligibility_status === 'eligible').length, ineligible: athletes.filter(a => a.eligibility_status === 'ineligible').length, pending: athletes.filter(a => a.eligibility_status === 'pending').length }
+    generated: new Date().toISOString(), academic_year, report_type: report_type||'eada',
+    athletes: athleteRows.map(a => ({ name: a.name, student_id: a.student_id, sport: a.sport_name, gender: a.sport_gender||a.gender, year: a.year, eligibility: a.eligibility_status })),
+    summary: { total: athleteRows.length, eligible: athleteRows.filter(a=>a.eligibility_status==='eligible').length, ineligible: athleteRows.filter(a=>a.eligibility_status==='ineligible').length, pending: athleteRows.filter(a=>a.eligibility_status==='pending').length }
   });
-  const r = db.prepare('INSERT INTO gsa_reports (school_id,sport_id,academic_year,report_type,report_data) VALUES (?,?,?,?,?)').run(
-    req.session.schoolId, sport_id || null, academic_year, report_type || 'eada', report_data
-  );
-  logActivity(db, req.session.schoolId, req.session.userId, 'report_generated', `Report generated: ${academic_year}`, 'report', r.lastInsertRowid);
-  res.json({ id: r.lastInsertRowid, data: JSON.parse(report_data) });
+  const { rows } = await query('INSERT INTO gsa_reports (school_id,sport_id,academic_year,report_type,report_data) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [req.session.schoolId, sport_id||null, academic_year, report_type||'eada', report_data]);
+  await logActivity(req.session.schoolId, req.session.userId, 'report_generated', `Report: ${academic_year}`, 'report', rows[0].id);
+  res.json({ id: rows[0].id, data: JSON.parse(report_data) });
 });
 
-app.put('/api/reports/:id/submit', requireAuth, (req, res) => {
-  getDb().prepare('UPDATE gsa_reports SET submitted_at=CURRENT_TIMESTAMP WHERE id=? AND school_id=?').run(req.params.id, req.session.schoolId);
+app.put('/api/reports/:id/submit', requireAuth, async (req, res) => {
+  await query('UPDATE gsa_reports SET submitted_at=NOW() WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
-app.get('/api/reports/:id/csv', requireAuth, (req, res) => {
-  const report = getDb().prepare('SELECT * FROM gsa_reports WHERE id=? AND school_id=?').get(req.params.id, req.session.schoolId);
-  if (!report) return res.status(404).json({ error: 'Not found' });
-  const data = JSON.parse(report.report_data);
-  const rows = [['Name', 'Student ID', 'Sport', 'Gender', 'Year', 'Eligibility Status']];
-  data.athletes.forEach(a => rows.push([a.name, a.student_id || '', a.sport, a.gender, a.year, a.eligibility]));
-  const csv = rows.map(r => r.map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+app.get('/api/reports/:id/csv', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT * FROM gsa_reports WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
+  if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+  const data = JSON.parse(rows[0].report_data);
+  const csvRows = [['Name','Student ID','Sport','Gender','Year','Eligibility Status']];
+  data.athletes.forEach(a => csvRows.push([a.name, a.student_id||'', a.sport, a.gender, a.year, a.eligibility]));
+  const csv = csvRows.map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
   res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="roster-report-${report.academic_year}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="roster-report-${rows[0].academic_year}.csv"`);
   res.send(csv);
 });
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-
-app.get('/api/dashboard', requireAuth, (req, res) => {
-  const db = getDb();
+app.get('/api/dashboard', requireAuth, async (req, res) => {
   const sid = req.session.schoolId;
   const today = new Date().toISOString().split('T')[0];
-  const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
-  const in60 = new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0];
+  const in60 = new Date(Date.now()+60*86400000).toISOString().split('T')[0];
 
-  const upcomingTrips = db.prepare(`SELECT COUNT(*) as n FROM trips WHERE school_id=? AND depart_date>=?`).get(sid, today).n;
-  const conflicts = db.prepare(`SELECT COUNT(DISTINCT tm.id) as n FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=? AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=?`).get(sid, today).n;
-  const expiringCerts = db.prepare(`SELECT COUNT(*) as n FROM tax_certs WHERE school_id=? AND expiry_date BETWEEN ? AND ?`).get(sid, today, in60).n;
-  const ineligibleAthletes = db.prepare(`SELECT COUNT(*) as n FROM athletes WHERE school_id=? AND eligibility_status='ineligible'`).get(sid).n;
+  const [r1,r2,r3,r4,r5,r6,r7] = await Promise.all([
+    query(`SELECT COUNT(*) as n FROM trips WHERE school_id=$1 AND depart_date>=$2`, [sid,today]),
+    query(`SELECT COUNT(DISTINCT tm.id) as n FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2`, [sid,today]),
+    query(`SELECT COUNT(*) as n FROM tax_certs WHERE school_id=$1 AND expiry_date BETWEEN $2 AND $3`, [sid,today,in60]),
+    query(`SELECT COUNT(*) as n FROM athletes WHERE school_id=$1 AND eligibility_status='ineligible'`, [sid]),
+    query(`SELECT t.*,s.name as sport_name,(SELECT COUNT(*) FROM trip_manifest tm WHERE tm.trip_id=t.id AND tm.status='confirmed') as manifest_count,(SELECT COUNT(*) FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id WHERE tm.trip_id=t.id AND tm.status='confirmed' AND a.eligibility_status!='eligible') as conflict_count FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=$1 AND t.depart_date>=$2 ORDER BY t.depart_date LIMIT 5`, [sid,today]),
+    query(`SELECT a.name as athlete_name,a.eligibility_status,a.eligibility_note,t.name as trip_name,t.depart_date,t.id as trip_id FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=$1 AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=$2 ORDER BY t.depart_date`, [sid,today]),
+    query(`SELECT al.*,u.name as user_name FROM activity_log al LEFT JOIN users u ON u.id=al.user_id WHERE al.school_id=$1 ORDER BY al.created_at DESC LIMIT 8`, [sid]),
+  ]);
 
-  const trips = db.prepare(`SELECT t.*, s.name as sport_name,
-    (SELECT COUNT(*) FROM trip_manifest tm WHERE tm.trip_id=t.id AND tm.status='confirmed') as manifest_count,
-    (SELECT COUNT(*) FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id WHERE tm.trip_id=t.id AND tm.status='confirmed' AND a.eligibility_status!='eligible') as conflict_count
-    FROM trips t LEFT JOIN sports s ON s.id=t.sport_id WHERE t.school_id=? AND t.depart_date>=? ORDER BY t.depart_date LIMIT 5`).all(sid, today);
-
-  const conflictDetails = db.prepare(`SELECT a.name as athlete_name, a.eligibility_status, a.eligibility_note, t.name as trip_name, t.depart_date, t.id as trip_id FROM trip_manifest tm JOIN athletes a ON a.id=tm.athlete_id JOIN trips t ON t.id=tm.trip_id WHERE t.school_id=? AND tm.status='confirmed' AND a.eligibility_status!='eligible' AND t.depart_date>=? ORDER BY t.depart_date`).all(sid, today);
-
-  const activity = db.prepare(`SELECT al.*, u.name as user_name FROM activity_log al LEFT JOIN users u ON u.id=al.user_id WHERE al.school_id=? ORDER BY al.created_at DESC LIMIT 8`).all(sid);
-
-  res.json({ upcomingTrips, conflicts, expiringCerts, ineligibleAthletes, trips, conflictDetails, activity });
+  res.json({ upcomingTrips: parseInt(r1.rows[0].n), conflicts: parseInt(r2.rows[0].n), expiringCerts: parseInt(r3.rows[0].n), ineligibleAthletes: parseInt(r4.rows[0].n), trips: r5.rows, conflictDetails: r6.rows, activity: r7.rows });
 });
 
 // ── Activity + Users ──────────────────────────────────────────────────────────
-
-app.get('/api/activity', requireAuth, (req, res) => {
-  res.json(getDb().prepare(`SELECT al.*, u.name as user_name FROM activity_log al LEFT JOIN users u ON u.id=al.user_id WHERE al.school_id=? ORDER BY al.created_at DESC LIMIT 50`).all(req.session.schoolId));
+app.get('/api/activity', requireAuth, async (req, res) => {
+  const { rows } = await query(`SELECT al.*,u.name as user_name FROM activity_log al LEFT JOIN users u ON u.id=al.user_id WHERE al.school_id=$1 ORDER BY al.created_at DESC LIMIT 50`, [req.session.schoolId]);
+  res.json(rows);
 });
 
-app.get('/api/users', requireAuth, (req, res) => {
-  res.json(getDb().prepare('SELECT id,name,email,role,phone,created_at FROM users WHERE school_id=? ORDER BY name').all(req.session.schoolId));
+app.get('/api/users', requireAuth, async (req, res) => {
+  const { rows } = await query('SELECT id,name,email,role,phone,created_at FROM users WHERE school_id=$1 ORDER BY name', [req.session.schoolId]);
+  res.json(rows);
 });
 
-app.post('/api/users', requireAuth, (req, res) => {
+app.post('/api/users', requireAuth, async (req, res) => {
   const { name, email, password, role, phone } = req.body;
   try {
-    const r = getDb().prepare('INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES (?,?,?,?,?,?)').run(
-      req.session.schoolId, name, email.toLowerCase(), bcrypt.hashSync(password, 10), role || 'staff', phone
-    );
-    res.json({ id: r.lastInsertRowid });
+    const { rows } = await query('INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+      [req.session.schoolId, name, email.toLowerCase(), bcrypt.hashSync(password,10), role||'staff', phone||null]);
+    res.json({ id: rows[0].id });
   } catch { res.status(400).json({ error: 'Email already in use' }); }
 });
 
-app.put('/api/users/:id', requireAuth, (req, res) => {
+app.put('/api/users/:id', requireAuth, async (req, res) => {
   const { name, email, role, phone, password } = req.body;
-  const db = getDb();
   if (password) {
-    db.prepare('UPDATE users SET name=?,email=?,role=?,phone=?,password_hash=? WHERE id=? AND school_id=?').run(name, email.toLowerCase(), role, phone, bcrypt.hashSync(password, 10), req.params.id, req.session.schoolId);
+    await query('UPDATE users SET name=$1,email=$2,role=$3,phone=$4,password_hash=$5 WHERE id=$6 AND school_id=$7',
+      [name, email.toLowerCase(), role, phone||null, bcrypt.hashSync(password,10), req.params.id, req.session.schoolId]);
   } else {
-    db.prepare('UPDATE users SET name=?,email=?,role=?,phone=? WHERE id=? AND school_id=?').run(name, email.toLowerCase(), role, phone, req.params.id, req.session.schoolId);
+    await query('UPDATE users SET name=$1,email=$2,role=$3,phone=$4 WHERE id=$5 AND school_id=$6',
+      [name, email.toLowerCase(), role, phone||null, req.params.id, req.session.schoolId]);
   }
   res.json({ ok: true });
 });
 
-app.delete('/api/users/:id', requireAuth, (req, res) => {
+app.delete('/api/users/:id', requireAuth, async (req, res) => {
   if (req.params.id == req.session.userId) return res.status(400).json({ error: 'Cannot delete yourself' });
-  getDb().prepare('DELETE FROM users WHERE id=? AND school_id=?').run(req.params.id, req.session.schoolId);
+  await query('DELETE FROM users WHERE id=$1 AND school_id=$2', [req.params.id, req.session.schoolId]);
   res.json({ ok: true });
 });
 
 // ── Health ────────────────────────────────────────────────────────────────────
-
-app.get('/health', (req, res) => {
-  try { getDb().prepare('SELECT 1').get(); res.json({ status: 'ok', ts: new Date().toISOString() }); }
+app.get('/health', async (req, res) => {
+  try { await query('SELECT 1'); res.json({ status: 'ok', ts: new Date().toISOString() }); }
   catch (e) { res.status(500).json({ status: 'error', error: e.message }); }
 });
 
