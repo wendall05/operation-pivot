@@ -148,6 +148,8 @@ async function initDb() {
     [schoolId, 'Marcus Webb', 'admin@operationpivot.demo', hash, 'admin', '(607) 555-0101']);
   await query(`INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6)`,
     [schoolId, 'Jordan Hayes', 'staff@operationpivot.demo', hash, 'staff', '(607) 555-0102']);
+  await query(`INSERT INTO users (school_id,name,email,password_hash,role,phone) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [schoolId, 'Coach Davis', 'coach@operationpivot.demo', hash, 'staff', '(606) 555-0103']);
 
   const { rows: [mbb] } = await query(`INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES ($1,$2,$3,$4,$5) RETURNING id`, [schoolId,"Men's Basketball",'winter','mens','Coach Davis']);
   const { rows: [wbb] } = await query(`INSERT INTO sports (school_id,name,season,gender,head_coach) VALUES ($1,$2,$3,$4,$5) RETURNING id`, [schoolId,"Women's Basketball",'winter','womens','Coach Rivera']);

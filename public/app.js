@@ -143,19 +143,25 @@ async function render() {
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 function renderLogin() {
+  const demoAccounts = [
+    { name: 'Marcus Webb', role: 'Athletic Director', badge: 'AD', email: 'admin@operationpivot.demo', color: '#059669', bg: '#d1fae5', text: '#065f46' },
+    { name: 'Jordan Hayes', role: 'Staff / Asst. AD', badge: 'ST', email: 'staff@operationpivot.demo', color: '#2563eb', bg: '#dbeafe', text: '#1e40af' },
+    { name: 'Coach Davis', role: 'Head Coach', badge: 'HC', email: 'coach@operationpivot.demo', color: '#7c3aed', bg: '#ede9fe', text: '#5b21b6' },
+  ];
   return `
-  <div class="min-h-screen flex items-center justify-center" style="background:linear-gradient(135deg,#0f172a 0%,#065f46 100%)">
+  <div class="min-h-screen flex items-center justify-center px-4 py-8" style="background:linear-gradient(135deg,#0f172a 0%,#065f46 100%)">
     <div class="w-full max-w-sm fade-in">
-      <div class="text-center mb-8">
+      <div class="text-center mb-7">
         <div class="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style="background:#059669">
           <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         </div>
         <h1 class="text-2xl font-bold text-white">Operation Pivot</h1>
         <p class="text-slate-400 text-sm mt-1">Athletic Director Platform</p>
       </div>
-      <div class="bg-white rounded-2xl shadow-2xl p-8">
+
+      <div class="bg-white rounded-2xl shadow-2xl p-6 mb-4">
         <div id="login-error" class="hidden mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg"></div>
-        <div class="space-y-4">
+        <div class="space-y-3">
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1">Email</label>
             <input id="login-email" type="email" placeholder="you@school.edu" class="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent" />
@@ -164,9 +170,25 @@ function renderLogin() {
             <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
             <input id="login-password" type="password" placeholder="••••••••" class="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent" />
           </div>
-          <button id="login-btn" class="w-full py-2.5 rounded-lg text-white text-sm font-semibold transition-colors" style="background:#059669">Sign in</button>
+          <button id="login-btn" class="w-full py-2.5 rounded-lg text-white text-sm font-semibold transition-colors" style="background:#059669">Sign In</button>
         </div>
-        <p class="text-center text-xs text-slate-400 mt-5">Demo: admin@operationpivot.demo / pivot123</p>
+      </div>
+
+      <div class="bg-white/10 rounded-2xl p-4 backdrop-blur-sm">
+        <p class="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3 text-center">Demo Accounts — click to sign in</p>
+        <div class="space-y-2">
+          ${demoAccounts.map(a => `
+            <button onclick="quickLogin('${a.email}')"
+              class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-left group">
+              <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold" style="background:${a.bg};color:${a.text}">${a.badge}</div>
+              <div class="flex-1 min-w-0">
+                <div class="text-white text-sm font-semibold">${a.name}</div>
+                <div class="text-slate-400 text-xs">${a.role}</div>
+              </div>
+              <svg class="text-slate-500 group-hover:text-white transition-colors" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>`).join('')}
+        </div>
+        <p class="text-center text-xs text-slate-500 mt-3">Password for all accounts: <span class="text-slate-400 font-mono">pivot123</span></p>
       </div>
     </div>
   </div>`;
@@ -189,6 +211,17 @@ async function doLogin() {
   } catch (e) {
     err.textContent = e.message;
     err.classList.remove('hidden');
+  }
+}
+
+async function quickLogin(email) {
+  try {
+    S.user = await POST('/auth/login', { email, password: 'pivot123' });
+    S._school = null;
+    nav('dashboard');
+  } catch (e) {
+    const err = document.getElementById('login-error');
+    if (err) { err.textContent = e.message; err.classList.remove('hidden'); }
   }
 }
 
