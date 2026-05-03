@@ -330,15 +330,20 @@ async function renderDashboard() {
           <h2 class="font-semibold text-slate-900 text-sm mb-4">Recent Activity</h2>
           ${d.activity.length === 0 ? '<p class="text-slate-400 text-sm">No recent activity.</p>' : `
           <div class="space-y-3">
-            ${d.activity.map(a => `
-              <div class="${a.entity_id&&a.entity_type==='trip'?'cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded-lg transition-colors':''} flex items-start gap-3 py-0.5"
-                ${a.entity_id&&a.entity_type==='trip'?`onclick="nav('trip-detail',{id:${a.entity_id}})"`:''}>
+            ${d.activity.map(a => {
+              const isTrip = a.entity_id && a.entity_type === 'trip';
+              const isAthlete = a.entity_id && a.entity_type === 'athlete';
+              const clickable = isTrip || isAthlete;
+              const onclick = isTrip ? `nav('trip-detail',{id:${a.entity_id}})` : isAthlete ? `nav('roster')` : '';
+              return `
+              <div class="${clickable?'cursor-pointer hover:bg-slate-50 -mx-2 px-2 rounded-lg transition-colors':''} flex items-start gap-3 py-0.5"
+                ${clickable?`onclick="${onclick}"`:''}>
                 <div class="w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0 ${a.action==='eligibility_change'?'bg-red-400':a.action==='roster_locked'?'bg-brand-500':'bg-slate-300'}"></div>
                 <div class="flex-1 min-w-0">
                   <p class="text-sm text-slate-700 leading-snug">${esc(a.detail||a.action)}</p>
-                  <p class="text-xs text-slate-400 mt-0.5">${ago(a.created_at)} ${a.user_name?'· '+esc(a.user_name):''}${a.entity_id&&a.entity_type==='trip'?'<span class="ml-1 text-brand-400">→</span>':''}</p>
+                  <p class="text-xs text-slate-400 mt-0.5">${ago(a.created_at)} ${a.user_name?'· '+esc(a.user_name):''}${clickable?'<span class="ml-1 text-brand-400">→</span>':''}</p>
                 </div>
-              </div>`).join('')}
+              </div>`;}).join('')}
           </div>`}
         </div>
       </div>
@@ -1018,8 +1023,10 @@ async function renderSports() {
   const rows = sports.length === 0
     ? '<tr><td colspan="5" class="px-5 py-10 text-center text-slate-400 text-sm">No sports yet — add your first sport to get started.</td></tr>'
     : sports.map(s => `
-      <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50/40">
-        <td class="px-5 py-3 font-medium text-slate-800">${esc(s.name)}</td>
+      <tr data-sport-row data-name="${esc(s.name)}" class="border-b border-slate-100 last:border-0 hover:bg-slate-50/40">
+        <td class="px-5 py-3 font-medium text-slate-800">
+          <button onclick="nav('roster',{sport:'${s.id}'})" class="hover:text-brand-600 hover:underline text-left">${esc(s.name)}</button>
+        </td>
         <td class="px-5 py-3">
           <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">${esc(seasonLabel[s.season] || s.season || '—')}</span>
         </td>
@@ -1039,6 +1046,12 @@ async function renderSports() {
           <p class="text-slate-500 text-sm mt-0.5">${sports.length} program${sports.length !== 1 ? 's' : ''}</p>
         </div>
         ${S.user?.role === 'admin' ? `<button onclick="openNewSport()" class="px-4 py-2 rounded-lg text-white text-sm font-semibold" style="background:#059669">+ Add Sport</button>` : ''}
+      </div>
+
+      <div class="mb-4 relative">
+        <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" placeholder="Search sports…" oninput="sportFilterInPlace(this.value)"
+          class="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500" />
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -1120,6 +1133,14 @@ async function renderSports() {
     </div>`;
 
   return [content, modal];
+}
+
+function sportFilterInPlace(val) {
+  const q = val.toLowerCase();
+  document.querySelectorAll('[data-sport-row]').forEach(row => {
+    const name = (row.dataset.name || '').toLowerCase();
+    row.classList.toggle('hidden', q && !name.includes(q));
+  });
 }
 
 function openNewSport() {
@@ -1207,12 +1228,12 @@ async function renderRoster() {
 
       <div class="flex items-center gap-3 mb-5 flex-wrap">
         ${['all','eligible','ineligible','pending'].map(f => `
-          <button onclick="nav('roster',{filter:'${f}',sport:'${sportFilter}',search:'${esc(search)}'})"
+          <button onclick="nav('roster',{filter:'${f}',sport:'${sportFilter}',search:S.params?.search||''})"
             class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filter===f?'bg-brand-600 text-white':'bg-white text-slate-600 hover:bg-slate-100 shadow-sm'}">
             ${f==='all'?'All Athletes':f.charAt(0).toUpperCase()+f.slice(1)}
             <span class="ml-1 text-xs ${filter===f?'opacity-75':'text-slate-400'}">${counts[f]}</span>
           </button>`).join('')}
-        <select onchange="nav('roster',{filter:'${filter}',sport:this.value,search:'${esc(search)}'})" class="ml-auto px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
+        <select onchange="nav('roster',{filter:'${filter}',sport:this.value,search:S.params?.search||''})" class="ml-auto px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500">
           <option value="">All Sports</option>
           ${sports.map(s => `<option value="${s.id}" ${String(s.id)===String(sportFilter)?'selected':''}>${esc(s.name)}</option>`).join('')}
         </select>
@@ -1220,15 +1241,15 @@ async function renderRoster() {
       <div class="mb-4 relative">
         <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input id="roster-search" type="text" value="${esc(search)}" placeholder="Search by name or student ID…"
-          oninput="rosterSearchDebounce(this.value)"
+          oninput="rosterFilterInPlace(this.value)"
           class="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500" />
-        ${search ? `<button onclick="nav('roster',{filter:'${filter}',sport:'${sportFilter}',search:''})" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-lg leading-none">&times;</button>` : ''}
+        <button id="roster-search-clear" onclick="rosterClearSearch()" class="${search ? '' : 'hidden'} absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-lg leading-none">&times;</button>
       </div>
 
       ${Object.keys(grouped).length === 0
         ? '<div class="text-center py-12 bg-white rounded-xl shadow-sm text-slate-400"><p class="font-medium">No athletes found</p></div>'
         : Object.entries(grouped).map(([sport, list]) => `
-          <div class="mb-5">
+          <div class="mb-5" data-sport-group>
             <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">${esc(sport)}</h2>
             <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
               <table class="w-full text-sm">
@@ -1241,7 +1262,7 @@ async function renderRoster() {
                 </tr></thead>
                 <tbody>
                   ${list.map(a => `
-                    <tr class="border-b border-slate-100 last:border-0 ${a.eligibility_status!=='eligible'?'bg-red-50/30':'hover:bg-slate-50/30'}">
+                    <tr data-athlete-row data-name="${esc(a.name)}" data-sid="${esc(a.student_id||'')}" class="border-b border-slate-100 last:border-0 ${a.eligibility_status!=='eligible'?'bg-red-50/30':'hover:bg-slate-50/30'}">
                       <td class="px-4 py-3 font-medium text-slate-800">${esc(a.name)}</td>
                       <td class="px-4 py-3 text-slate-500 font-mono text-xs">${esc(a.student_id||'—')}</td>
                       <td class="px-4 py-3 text-slate-600">${esc(a.year||'—')}</td>
@@ -1345,10 +1366,27 @@ async function renderRoster() {
   return [content, modals];
 }
 
-let _rosterSearchTimer;
-function rosterSearchDebounce(val) {
-  clearTimeout(_rosterSearchTimer);
-  _rosterSearchTimer = setTimeout(() => nav('roster', { filter: S.params?.filter||'all', sport: S.params?.sport||'', search: val }), 300);
+function rosterFilterInPlace(val) {
+  const q = val.toLowerCase();
+  document.querySelectorAll('[data-athlete-row]').forEach(row => {
+    const name = (row.dataset.name || '').toLowerCase();
+    const sid = (row.dataset.sid || '').toLowerCase();
+    const match = !q || name.includes(q) || sid.includes(q);
+    row.classList.toggle('hidden', !match);
+  });
+  document.querySelectorAll('[data-sport-group]').forEach(group => {
+    const hasVisible = group.querySelector('[data-athlete-row]:not(.hidden)');
+    group.classList.toggle('hidden', !hasVisible);
+  });
+  const clearBtn = document.getElementById('roster-search-clear');
+  if (clearBtn) clearBtn.classList.toggle('hidden', !val);
+  S.params = { ...S.params, search: val };
+}
+
+function rosterClearSearch() {
+  const input = document.getElementById('roster-search');
+  if (input) { input.value = ''; input.focus(); }
+  rosterFilterInPlace('');
 }
 
 function openEditAthlete(id, name, sportId, studentId, year, elig, note) {
