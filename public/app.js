@@ -65,6 +65,7 @@ function shell(content, modals = '') {
   const isCoach = S.user?.role === 'coach';
   const allNavLinks = [
     { page: 'dashboard', label: 'Dashboard', svg: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>' },
+    { page: 'gameday', label: 'Game Day', svg: '<path d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/>' },
     { page: 'trips', label: 'Trips', svg: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>' },
     { page: 'sports', label: 'Sports', svg: '<circle cx="12" cy="12" r="10"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 9.17l4.24-4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M9.17 14.83l-4.24 4.24"/><circle cx="12" cy="12" r="4"/>', adminOnly: true },
     { page: 'roster', label: 'Roster', svg: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>' },
@@ -128,6 +129,8 @@ async function render() {
   try {
     switch (S.page) {
       case 'dashboard':    [content, modals] = await renderDashboard(); break;
+      case 'gameday':      [content, modals] = await renderGameDay(); break;
+      case 'gameday-roster': [content, modals] = await renderGameRoster(); break;
       case 'trips':        [content, modals] = await renderTrips(); break;
       case 'trip-detail':  [content, modals] = await renderTripDetail(); break;
       case 'sports':       [content, modals] = await renderSports(); break;
@@ -2092,3 +2095,237 @@ async function init() {
 }
 
 init();
+
+// ── Game Day Readiness Board ──────────────────────────────────────────────────
+const SPORT_EMOJI = {football:'🏈',volleyball:'🏐',soccer:'⚽',basketball:'🏀','men\'s basketball':'🏀','women\'s basketball':'🏀','men\'s soccer':'⚽','women\'s soccer':'⚽',baseball:'⚾',softball:'🥎',track:'🏃',swimming:'🏊',tennis:'🎾',golf:'⛳',wrestling:'🤼',lacrosse:'🥍',hockey:'🏒'};
+function sportEmoji(name) { return SPORT_EMOJI[(name||'').toLowerCase()] || '🏅'; }
+
+async function renderGameDay() {
+  const today = new Date().toISOString().split('T')[0];
+  const games = await GET(`/api/gameday/readiness?date=${today}`);
+
+  const totalAthletes = games.reduce((s,g)=>s+g.total_athletes,0);
+  const totalCleared  = games.reduce((s,g)=>s+g.cleared,0);
+  const totalBlocked  = games.reduce((s,g)=>s+g.blocked,0);
+  const totalConflicts= games.reduce((s,g)=>s+g.conflicts,0);
+  const overallPct    = totalAthletes > 0 ? Math.round(totalCleared/totalAthletes*100) : 0;
+  const pctColor      = overallPct >= 90 ? '#10b981' : overallPct >= 75 ? '#f59e0b' : '#ef4444';
+
+  const content = `
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-900">Game Day Command</h1>
+      <p class="text-sm text-slate-500 mt-0.5">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</p>
+    </div>
+    <button onclick="nav('gameday')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg transition-colors">↻ Refresh</button>
+  </div>
+
+  ${games.length === 0 ? `
+  <div class="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+    <div class="text-5xl mb-3">📅</div>
+    <p class="text-slate-600 font-medium">No games scheduled today</p>
+    <p class="text-slate-400 text-sm mt-1">Add a game event to start tracking eligibility</p>
+    <button onclick="showAddGameModal()" class="mt-4 px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600 transition-colors">+ Add Today's Game</button>
+  </div>` : `
+
+  <!-- Overall clearance banner -->
+  <div class="rounded-2xl p-5 mb-5 text-white" style="background:linear-gradient(135deg,#0f172a,#1e293b)">
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-sm font-semibold text-slate-400 uppercase tracking-wider">Overall Game Day Readiness</span>
+      <span class="text-3xl font-black" style="color:${pctColor}">${overallPct}%</span>
+    </div>
+    <div class="w-full bg-slate-700 rounded-full h-2.5 mb-3">
+      <div class="h-2.5 rounded-full transition-all" style="width:${overallPct}%;background:${pctColor}"></div>
+    </div>
+    <div class="flex gap-4 text-xs">
+      <span class="text-emerald-400 font-bold">✓ ${totalCleared} cleared</span>
+      <span class="text-red-400 font-bold">✗ ${totalBlocked} blocked</span>
+      ${totalConflicts > 0 ? `<span class="text-amber-400 font-bold">⚡ ${totalConflicts} conflict${totalConflicts>1?'s':''}</span>` : ''}
+      <span class="text-slate-400">${totalAthletes} total</span>
+    </div>
+  </div>
+
+  <!-- Per-game cards -->
+  ${games.map(g => {
+    const emoji = sportEmoji(g.sport_name || g.team_name);
+    const pct = g.cleared_pct;
+    const barColor = pct >= 90 ? '#10b981' : pct >= 75 ? '#f59e0b' : '#ef4444';
+    const gameTime = g.game_time ? g.game_time.slice(0,5) : '';
+    const checked = g.last_checked_at ? new Date(g.last_checked_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) : 'Not yet';
+    return `
+    <div class="bg-white rounded-2xl border border-slate-200 p-5 mb-4 hover:border-slate-300 transition-colors">
+      <div class="flex items-start justify-between mb-3">
+        <div class="flex items-center gap-3">
+          <span class="text-3xl">${emoji}</span>
+          <div>
+            <p class="font-bold text-slate-900">${esc(g.sport_name||g.team_name)}</p>
+            <p class="text-sm text-slate-500">vs ${esc(g.opponent)} · ${gameTime} · ${g.is_home?'Home':'Away'}</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <span class="text-xl font-black" style="color:${barColor}">${pct}%</span>
+          <p class="text-xs text-slate-400">cleared</p>
+        </div>
+      </div>
+      <div class="w-full bg-slate-100 rounded-full h-2 mb-3">
+        <div class="h-2 rounded-full" style="width:${pct}%;background:${barColor}"></div>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex gap-3 text-xs">
+          <span class="text-emerald-600 font-semibold">✓ ${g.cleared}</span>
+          <span class="text-red-600 font-semibold">✗ ${g.blocked}</span>
+          ${g.conflicts > 0 ? `<span class="text-amber-600 font-semibold">⚡ ${g.conflicts} conflict</span>` : ''}
+          ${g.unchecked > 0 ? `<span class="text-slate-400">${g.unchecked} unchecked</span>` : ''}
+        </div>
+        <div class="flex gap-2">
+          <button onclick="runGameCheck(${g.game_event_id})" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded-lg transition-colors">Run Check</button>
+          <button onclick="nav('gameday-roster',{gameId:${g.game_event_id},gameName:'${esc(g.sport_name||g.team_name)} vs ${esc(g.opponent)}'})" class="text-xs bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg transition-colors">View Roster →</button>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400 mt-2">Last checked: ${checked}</p>
+    </div>`;
+  }).join('')}
+
+  <button onclick="showAddGameModal()" class="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-sm text-slate-400 hover:border-orange-300 hover:text-orange-500 transition-colors">+ Add Game Event</button>
+  `}`;
+
+  const modals = `
+  <div id="add-game-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl w-full max-w-md p-6">
+      <h3 class="font-bold text-slate-900 mb-4">Add Game Event</h3>
+      <div class="space-y-3">
+        <select id="ag-sport" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"><option value="">Select sport…</option></select>
+        <input id="ag-opponent" type="text" placeholder="Opponent name" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"/>
+        <div class="flex gap-2">
+          <input id="ag-date" type="date" value="${today}" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm"/>
+          <input id="ag-time" type="time" class="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm"/>
+        </div>
+        <input id="ag-location" type="text" placeholder="Location" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"/>
+        <label class="flex items-center gap-2 text-sm text-slate-600"><input id="ag-home" type="checkbox" checked/> Home game</label>
+      </div>
+      <div class="flex gap-2 mt-5">
+        <button onclick="closeModal('add-game-modal')" class="flex-1 py-2 border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+        <button onclick="submitAddGame()" class="flex-1 py-2 bg-orange-500 text-white rounded-lg text-sm font-semibold hover:bg-orange-600">Add Game</button>
+      </div>
+    </div>
+  </div>`;
+
+  // Load sports into select
+  setTimeout(async () => {
+    const sports = await GET('/api/sports').catch(()=>[]);
+    const sel = document.getElementById('ag-sport');
+    if (sel) sel.innerHTML = '<option value="">Select sport…</option>' + sports.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  }, 50);
+
+  return [content, modals];
+}
+
+async function showAddGameModal() { modal('add-game-modal'); }
+
+async function submitAddGame() {
+  const sport_id = document.getElementById('ag-sport').value;
+  const opponent = document.getElementById('ag-opponent').value.trim();
+  const game_date = document.getElementById('ag-date').value;
+  const game_time = document.getElementById('ag-time').value;
+  const location = document.getElementById('ag-location').value.trim();
+  const is_home = document.getElementById('ag-home').checked;
+  if (!sport_id || !opponent || !game_date) { toast('Sport, opponent, and date are required', 'error'); return; }
+  try {
+    await POST('/api/gameday/games', { sport_id: parseInt(sport_id), opponent, game_date, game_time: game_time||null, location: location||null, is_home });
+    closeModal('add-game-modal');
+    toast('Game added — running eligibility check…');
+    nav('gameday');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function runGameCheck(gameId) {
+  try {
+    toast('Running eligibility check…', 'info');
+    await POST(`/api/gameday/game/${gameId}/check`);
+    toast('Eligibility updated ✓');
+    nav('gameday');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Game Roster ───────────────────────────────────────────────────────────────
+async function renderGameRoster() {
+  const { gameId, gameName } = S.params;
+  if (!gameId) { nav('gameday'); return ['',''] }
+
+  const roster = await GET(`/api/gameday/game/${gameId}/roster`);
+  const cleared   = roster.filter(r => r.is_cleared);
+  const blocked   = roster.filter(r => !r.is_cleared && !r.conflict_flag);
+  const conflicts = roster.filter(r => r.conflict_flag && !r.conflict_resolved);
+
+  const content = `
+  <div class="mb-5 flex items-center gap-3">
+    <button onclick="nav('gameday')" class="text-slate-400 hover:text-slate-700">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    <div>
+      <h1 class="text-xl font-bold text-slate-900">Game Day Roster</h1>
+      <p class="text-sm text-slate-500">${esc(gameName||'')}</p>
+    </div>
+    <a href="/api/gameday/roster-export/${gameId}" class="ml-auto text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg">↓ Export CSV</a>
+  </div>
+
+  <!-- Summary pills -->
+  <div class="flex gap-2 mb-5 flex-wrap">
+    <span class="px-3 py-1.5 bg-emerald-100 text-emerald-800 rounded-full text-xs font-bold">✓ ${cleared.length} Cleared</span>
+    <span class="px-3 py-1.5 bg-red-100 text-red-800 rounded-full text-xs font-bold">✗ ${blocked.length} Blocked</span>
+    ${conflicts.length ? `<span class="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-full text-xs font-bold">⚡ ${conflicts.length} Conflict</span>` : ''}
+    <button onclick="runGameCheck(${gameId}).then(()=>nav('gameday-roster',S.params))" class="ml-auto text-xs bg-orange-500 text-white px-3 py-1.5 rounded-full font-semibold hover:bg-orange-600 transition-colors">↻ Re-Check</button>
+  </div>
+
+  ${roster.length === 0 ? '<p class="text-slate-400 text-center py-10">No athletes found for this sport.</p>' :
+    roster.map(a => {
+      const isCleared = a.is_cleared;
+      const hasConflict = a.conflict_flag && !a.conflict_resolved;
+      const bgClass = hasConflict ? 'border-amber-300 bg-amber-50' : isCleared ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50';
+      const badge = hasConflict
+        ? '<span class="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-bold rounded-full">⚡ Conflict</span>'
+        : isCleared
+        ? '<span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full">✓ Cleared</span>'
+        : '<span class="px-2 py-0.5 bg-red-100 text-red-800 text-xs font-bold rounded-full">✗ Blocked</span>';
+
+      const periodsHtml = a.periods_total > 0 ? (() => {
+        const attended = a.periods_attended || 0;
+        const total = a.periods_total || 7;
+        return Array.from({length:total},(_,i)=>`<div class="w-6 h-6 rounded-md text-xs flex items-center justify-center font-bold ${i<attended?'bg-emerald-500 text-white':'bg-slate-200 text-slate-400'}">${i+1}</div>`).join('');
+      })() : '';
+
+      return `
+      <div class="bg-white border rounded-xl p-4 mb-3 ${bgClass}">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex-1">
+            <div class="flex items-center gap-2 flex-wrap mb-1">
+              <span class="font-bold text-slate-900">${esc(a.athlete_name)}</span>
+              ${badge}
+              ${a.eligibility_status !== 'eligible' ? `<span class="px-1.5 py-0.5 bg-slate-200 text-slate-600 text-xs rounded">${esc(a.eligibility_status)}</span>` : ''}
+            </div>
+            <p class="text-xs text-slate-500">${esc(a.student_id||'')} · ${esc(a.year||'')}</p>
+            ${a.blocked_reason ? `<p class="text-xs text-red-600 mt-1">${esc(a.blocked_reason)}</p>` : ''}
+            ${periodsHtml ? `<div class="flex gap-1 mt-2">${periodsHtml}</div>` : ''}
+            ${hasConflict && a.conflict_data ? `
+            <div class="mt-2 p-2 bg-amber-100 rounded-lg text-xs text-amber-800">
+              <strong>Conflict:</strong> ${esc(JSON.parse(typeof a.conflict_data==='string'?a.conflict_data:JSON.stringify(a.conflict_data)).reason||'')}
+            </div>
+            <div class="flex gap-2 mt-2">
+              <button onclick="resolveConflict(${a.eligibility_id},'override_cleared')" class="text-xs bg-emerald-500 text-white px-2.5 py-1 rounded-lg hover:bg-emerald-600">✓ Clear to Play</button>
+              <button onclick="resolveConflict(${a.eligibility_id},'override_blocked')" class="text-xs bg-red-500 text-white px-2.5 py-1 rounded-lg hover:bg-red-600">✗ Block</button>
+            </div>` : ''}
+          </div>
+        </div>
+      </div>`;
+    }).join('')}`;
+
+  return [content, ''];
+}
+
+async function resolveConflict(eligibilityId, resolution) {
+  try {
+    await POST('/api/gameday/conflict/resolve', { eligibility_id: eligibilityId, resolution });
+    toast(resolution === 'override_cleared' ? 'Cleared for play ✓' : 'Athlete blocked ✗');
+    nav('gameday-roster', S.params);
+  } catch(e) { toast(e.message, 'error'); }
+}

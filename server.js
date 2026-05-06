@@ -8,7 +8,9 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const cron = require('node-cron');
 const { query, initDb } = require('./src/db');
+const { checkGameDayEligibility, getTeamReadiness, getGameRoster, resolveConflict, runEligibilityPulse } = require('./src/eligibility');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -445,6 +447,111 @@ app.get('/api/share/:token', async (req, res) => {
   ]);
   res.json({ trip, manifest, certs });
 });
+
+// ── Game Day: Game Events ─────────────────────────────────────────────────────
+app.get('/api/gameday/readiness', requireAuth, async (req, res) => {
+  try {
+    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const rows = await getTeamReadiness(req.session.schoolId, date);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/gameday/games', requireAuth, async (req, res) => {
+  try {
+    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const { rows } = await query(`
+      SELECT ge.*, sp.name AS sport_name FROM game_events ge
+      JOIN sports sp ON sp.id = ge.sport_id
+      WHERE ge.school_id = $1 AND ge.game_date = $2 AND ge.status != 'cancelled'
+      ORDER BY ge.game_time ASC NULLS LAST
+    `, [req.session.schoolId, date]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/gameday/games', requireAuth, async (req, res) => {
+  const { sport_id, opponent, game_date, game_time, location, is_home, periods_required, periods_total } = req.body;
+  try {
+    const { rows } = await query(`
+      INSERT INTO game_events (school_id, sport_id, opponent, game_date, game_time, location, is_home, periods_required, periods_total, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'scheduled') RETURNING id
+    `, [req.session.schoolId, sport_id, opponent, game_date, game_time||null, location||null, is_home!==false, periods_required||4, periods_total||7]);
+    res.json({ id: rows[0].id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/gameday/game/:gameId/roster', requireAuth, async (req, res) => {
+  try {
+    const rows = await getGameRoster(req.params.gameId, req.session.schoolId);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/gameday/game/:gameId/check', requireAuth, async (req, res) => {
+  try {
+    const result = await checkGameDayEligibility(req.params.gameId, req.session.schoolId, 'manual');
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/gameday/conflict/resolve', requireAuth, async (req, res) => {
+  const { eligibility_id, resolution } = req.body;
+  try {
+    const result = await resolveConflict(eligibility_id, resolution, req.session.userId);
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/gameday/attendance', requireAuth, async (req, res) => {
+  const { athlete_id, date, periods } = req.body;
+  if (!athlete_id || !date || !Array.isArray(periods)) return res.status(400).json({ error: 'athlete_id, date, and periods[] required' });
+  try {
+    for (const p of periods) {
+      await query(`
+        INSERT INTO attendance_periods (athlete_id, date, period_number, period_name, status, source)
+        VALUES ($1,$2,$3,$4,$5,'manual')
+        ON CONFLICT (athlete_id, date, period_number) DO UPDATE SET status=$5
+      `, [athlete_id, date, p.period_number, p.period_name || `Period ${p.period_number}`, p.status]);
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/gameday/notifications', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT cn.*, a.name AS athlete_name FROM coach_notifications cn
+      JOIN athletes a ON a.id = cn.athlete_id
+      WHERE cn.coach_id = $1 AND cn.read_at IS NULL
+      ORDER BY cn.created_at DESC
+    `, [req.session.userId]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/gameday/notifications/read', requireAuth, async (req, res) => {
+  await query(`UPDATE coach_notifications SET read_at=NOW() WHERE coach_id=$1 AND read_at IS NULL`, [req.session.userId]);
+  res.json({ ok: true });
+});
+
+app.get('/api/gameday/roster-export/:gameId', requireAuth, async (req, res) => {
+  try {
+    const rows = await getGameRoster(req.params.gameId, req.session.schoolId);
+    const gameR = await query(`SELECT ge.*,sp.name AS sport_name FROM game_events ge JOIN sports sp ON sp.id=ge.sport_id WHERE ge.id=$1`, [req.params.gameId]);
+    const game = gameR.rows[0];
+    const csvRows = [['Name','Student ID','Year','Cleared','Periods Attended','Periods Required','Blocked Reason']];
+    rows.forEach(r => csvRows.push([r.athlete_name, r.student_id||'', r.year||'', r.is_cleared?'YES':'NO', r.periods_attended||0, r.periods_required||4, r.blocked_reason||'']));
+    const csv = csvRows.map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="gameday-roster-${game?.game_date||'today'}.csv"`);
+    res.send(csv);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Eligibility pulse crons ───────────────────────────────────────────────────
+cron.schedule('30 9 * * 1-5', () => runEligibilityPulse('morning').catch(e => console.error('[cron] morning pulse:', e.message)));
+cron.schedule('30 13 * * 1-5', () => runEligibilityPulse('afternoon').catch(e => console.error('[cron] afternoon pulse:', e.message)));
 
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/health', async (req, res) => {

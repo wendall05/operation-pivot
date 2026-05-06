@@ -134,6 +134,88 @@ async function initDb() {
   await query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS per_diem_rate NUMERIC`);
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sport_id INTEGER REFERENCES sports(id)`);
 
+  // ── Game Day Eligibility tables ──────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS game_events (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER REFERENCES schools(id),
+      sport_id INTEGER REFERENCES sports(id),
+      opponent TEXT,
+      game_date DATE NOT NULL,
+      game_time TIME,
+      location TEXT,
+      is_home BOOLEAN DEFAULT true,
+      status TEXT DEFAULT 'scheduled',
+      periods_required INTEGER,
+      periods_total INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS attendance_periods (
+      id SERIAL PRIMARY KEY,
+      athlete_id INTEGER REFERENCES athletes(id),
+      date DATE NOT NULL,
+      period_number INTEGER NOT NULL,
+      period_name TEXT,
+      status TEXT NOT NULL,
+      source TEXT DEFAULT 'manual',
+      source_id TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(athlete_id, date, period_number)
+    );
+
+    CREATE TABLE IF NOT EXISTS game_day_eligibility (
+      id SERIAL PRIMARY KEY,
+      game_event_id INTEGER REFERENCES game_events(id),
+      athlete_id INTEGER REFERENCES athletes(id),
+      is_cleared BOOLEAN,
+      periods_attended INTEGER DEFAULT 0,
+      periods_required INTEGER DEFAULT 4,
+      periods_total INTEGER DEFAULT 7,
+      blocked_reason TEXT,
+      conflict_flag BOOLEAN DEFAULT false,
+      conflict_type TEXT,
+      conflict_data JSONB,
+      conflict_resolved BOOLEAN DEFAULT false,
+      conflict_resolved_by INTEGER,
+      conflict_resolved_at TIMESTAMPTZ,
+      conflict_resolution TEXT,
+      cleared_at TIMESTAMPTZ,
+      last_checked_at TIMESTAMPTZ DEFAULT NOW(),
+      check_source TEXT DEFAULT 'manual',
+      UNIQUE(game_event_id, athlete_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS coach_notifications (
+      id SERIAL PRIMARY KEY,
+      coach_id INTEGER REFERENCES users(id),
+      athlete_id INTEGER REFERENCES athletes(id),
+      game_event_id INTEGER REFERENCES game_events(id),
+      type TEXT DEFAULT 'red_flag',
+      message TEXT,
+      read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(coach_id, athlete_id, game_event_id, type)
+    );
+
+    CREATE TABLE IF NOT EXISTS bus_routes (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER REFERENCES schools(id),
+      route_name TEXT NOT NULL,
+      am_arrival_expected TIME,
+      pm_departure_expected TIME,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS bus_scans (
+      id SERIAL PRIMARY KEY,
+      athlete_id INTEGER REFERENCES athletes(id),
+      route_id INTEGER REFERENCES bus_routes(id),
+      scan_type TEXT DEFAULT 'board',
+      scanned_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
   await query(`
     UPDATE users SET role='coach', sport_id=(SELECT id FROM sports WHERE school_id=users.school_id AND name='Men''s Basketball' LIMIT 1)
     WHERE email='coach@operationpivot.demo' AND (role != 'coach' OR sport_id IS NULL)
