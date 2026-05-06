@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const cron = require('node-cron');
 const { query, initDb } = require('./src/db');
 const { checkGameDayEligibility, getTeamReadiness, getGameRoster, resolveConflict, runEligibilityPulse } = require('./src/eligibility');
+const { syncAcademicStatus } = require('./src/academic-sync');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -549,9 +550,40 @@ app.get('/api/gameday/roster-export/:gameId', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Academic risk: manual trigger ─────────────────────────────────────────────
+app.post('/api/academic/sync', requireAuth, async (req, res) => {
+  try {
+    await syncAcademicStatus();
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/academic/at-risk', requireAuth, async (req, res) => {
+  try {
+    const isCoach = req.session.role === 'coach';
+    const sportFilter = isCoach && req.session.sportId ? `AND a.sport_id = ${parseInt(req.session.sportId)}` : '';
+    const { rows } = await query(`
+      SELECT a.id, a.name, a.student_id, a.year, a.sport_id, a.academic_risk_level,
+             a.academic_risk_data, a.academic_synced_at, s.name AS sport_name
+      FROM athletes a
+      JOIN sports s ON s.id = a.sport_id
+      WHERE a.school_id = $1
+        AND a.academic_risk_level IN ('warning','critical')
+        ${sportFilter}
+      ORDER BY
+        CASE a.academic_risk_level WHEN 'critical' THEN 0 ELSE 1 END,
+        a.name ASC
+    `, [req.session.schoolId]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Eligibility pulse crons ───────────────────────────────────────────────────
 cron.schedule('30 9 * * 1-5', () => runEligibilityPulse('morning').catch(e => console.error('[cron] morning pulse:', e.message)));
 cron.schedule('30 13 * * 1-5', () => runEligibilityPulse('afternoon').catch(e => console.error('[cron] afternoon pulse:', e.message)));
+
+// Academic sync — every hour during school hours Mon–Fri
+cron.schedule('0 7-17 * * 1-5', () => syncAcademicStatus().catch(e => console.error('[cron] academic sync:', e.message)));
 
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/health', async (req, res) => {

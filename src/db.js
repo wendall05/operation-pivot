@@ -134,6 +134,12 @@ async function initDb() {
   await query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS per_diem_rate NUMERIC`);
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sport_id INTEGER REFERENCES sports(id)`);
 
+  // Academic risk sync columns
+  await query(`ALTER TABLE athletes ADD COLUMN IF NOT EXISTS schoolbridge_student_id INTEGER`);
+  await query(`ALTER TABLE athletes ADD COLUMN IF NOT EXISTS academic_risk_level TEXT DEFAULT 'safe'`);
+  await query(`ALTER TABLE athletes ADD COLUMN IF NOT EXISTS academic_risk_data JSONB`);
+  await query(`ALTER TABLE athletes ADD COLUMN IF NOT EXISTS academic_synced_at TIMESTAMPTZ`);
+
   // ── Game Day Eligibility tables ──────────────────────────────────────────────
   await query(`
     CREATE TABLE IF NOT EXISTS game_events (

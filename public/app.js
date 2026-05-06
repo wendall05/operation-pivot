@@ -238,7 +238,10 @@ async function logout() {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 async function renderDashboard() {
-  const d = await GET('/api/dashboard');
+  const [d, atRisk] = await Promise.all([
+    GET('/api/dashboard'),
+    GET('/api/academic/at-risk').catch(() => []),
+  ]);
 
   const actionLabels = {
     roster_locked: 'Roster Locked', eligibility_change: 'Eligibility Change',
@@ -288,6 +291,31 @@ async function renderDashboard() {
       </div>
 
       ${conflictBanner}${certWarning}
+
+      ${atRisk.length > 0 ? `
+      <div class="mb-5 p-4 rounded-xl border ${atRisk.some(a=>a.academic_risk_level==='critical')?'bg-red-50 border-red-200':'bg-amber-50 border-amber-200'}">
+        <div class="flex items-center justify-between mb-2">
+          <p class="${atRisk.some(a=>a.academic_risk_level==='critical')?'text-red-800':'text-amber-800'} font-semibold text-sm">
+            📚 ${atRisk.length} Athlete${atRisk.length>1?'s':''} at Academic Risk — Intervene Before Ineligibility
+          </p>
+          <button onclick="triggerAcademicSync()" class="text-xs text-slate-500 hover:text-slate-700 underline">Sync now</button>
+        </div>
+        <div class="space-y-1.5">
+          ${atRisk.slice(0,5).map(a => {
+            const data = typeof a.academic_risk_data === 'string' ? JSON.parse(a.academic_risk_data) : (a.academic_risk_data || {});
+            const isCritical = a.academic_risk_level === 'critical';
+            return `
+            <div class="flex items-start gap-2 text-xs ${isCritical?'text-red-700':'text-amber-700'}">
+              <span class="font-bold flex-shrink-0">${isCritical?'🚨':'⚠️'} ${esc(a.name)}</span>
+              <span class="text-slate-400">·</span>
+              <span class="text-slate-500">${esc(a.sport_name)}</span>
+              <span class="text-slate-400">·</span>
+              <span>${esc((data.risk_reasons||[]).join(' · '))}</span>
+            </div>`;
+          }).join('')}
+          ${atRisk.length > 5 ? `<p class="text-xs text-slate-400 mt-1">+ ${atRisk.length - 5} more — <button onclick="nav('roster',{filter:'at-risk'})" class="underline">View all</button></p>` : ''}
+        </div>
+      </div>` : ''}
 
       <div class="grid grid-cols-4 gap-4 mb-6">
         ${stats.map(s => `
@@ -2252,7 +2280,11 @@ async function renderGameRoster() {
   const { gameId, gameName } = S.params;
   if (!gameId) { nav('gameday'); return ['',''] }
 
-  const roster = await GET(`/api/gameday/game/${gameId}/roster`);
+  const [roster, atRisk] = await Promise.all([
+    GET(`/api/gameday/game/${gameId}/roster`),
+    GET('/api/academic/at-risk').catch(() => []),
+  ]);
+  const atRiskById = Object.fromEntries(atRisk.map(a => [a.id, a]));
   const cleared   = roster.filter(r => r.is_cleared);
   const blocked   = roster.filter(r => !r.is_cleared && !r.conflict_flag);
   const conflicts = roster.filter(r => r.conflict_flag && !r.conflict_resolved);
@@ -2294,6 +2326,7 @@ async function renderGameRoster() {
         return Array.from({length:total},(_,i)=>`<div class="w-6 h-6 rounded-md text-xs flex items-center justify-center font-bold ${i<attended?'bg-emerald-500 text-white':'bg-slate-200 text-slate-400'}">${i+1}</div>`).join('');
       })() : '';
 
+      const athleteRisk = atRiskById[a.athlete_id];
       return `
       <div class="bg-white border rounded-xl p-4 mb-3 ${bgClass}">
         <div class="flex items-start justify-between gap-3">
@@ -2305,6 +2338,7 @@ async function renderGameRoster() {
             </div>
             <p class="text-xs text-slate-500">${esc(a.student_id||'')} · ${esc(a.year||'')}</p>
             ${a.blocked_reason ? `<p class="text-xs text-red-600 mt-1">${esc(a.blocked_reason)}</p>` : ''}
+            ${athleteRisk ? academicRiskBadge(athleteRisk.academic_risk_level, athleteRisk.academic_risk_data) : ''}
             ${periodsHtml ? `<div class="flex gap-1 mt-2">${periodsHtml}</div>` : ''}
             ${hasConflict && a.conflict_data ? `
             <div class="mt-2 p-2 bg-amber-100 rounded-lg text-xs text-amber-800">
@@ -2328,4 +2362,24 @@ async function resolveConflict(eligibilityId, resolution) {
     toast(resolution === 'override_cleared' ? 'Cleared for play ✓' : 'Athlete blocked ✗');
     nav('gameday-roster', S.params);
   } catch(e) { toast(e.message, 'error'); }
+}
+
+async function triggerAcademicSync() {
+  try {
+    toast('Syncing academic data from SchoolBridge…', 'info');
+    await POST('/api/academic/sync');
+    toast('Academic sync complete ✓');
+    nav('dashboard');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// Academic risk badge helper used in roster and game day views
+function academicRiskBadge(riskLevel, riskData) {
+  if (!riskLevel || riskLevel === 'safe') return '';
+  const data = typeof riskData === 'string' ? JSON.parse(riskData || '{}') : (riskData || {});
+  const reasons = (data.risk_reasons || []).join(' · ');
+  if (riskLevel === 'critical') {
+    return `<div class="mt-1.5 px-2 py-1 bg-red-100 text-red-700 rounded-lg text-xs font-medium">🚨 Academic Critical: ${esc(reasons)}</div>`;
+  }
+  return `<div class="mt-1.5 px-2 py-1 bg-amber-100 text-amber-700 rounded-lg text-xs font-medium">⚠️ Academic Warning: ${esc(reasons)}</div>`;
 }
