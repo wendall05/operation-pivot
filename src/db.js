@@ -220,6 +220,22 @@ async function initDb() {
       scan_type TEXT DEFAULT 'board',
       scanned_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS game_day_bus (
+      id SERIAL PRIMARY KEY,
+      game_event_id INTEGER REFERENCES game_events(id) ON DELETE CASCADE,
+      athlete_id INTEGER REFERENCES athletes(id) ON DELETE CASCADE,
+      schoolbridge_student_id INTEGER,
+      status TEXT DEFAULT 'school' CHECK (status IN ('school','on_bus','at_venue','returning','returned')),
+      departed_at TIMESTAMPTZ,
+      estimated_return TIMESTAMPTZ,
+      arrived_at TIMESTAMPTZ,
+      return_departed_at TIMESTAMPTZ,
+      returned_at TIMESTAMPTZ,
+      added_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(game_event_id, athlete_id)
+    );
   `);
 
   await query(`

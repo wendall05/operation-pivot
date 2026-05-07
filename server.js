@@ -550,6 +550,180 @@ app.get('/api/gameday/roster-export/:gameId', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Bus Transit Management ────────────────────────────────────────────────────
+
+// GET /api/bus/game/:gameId — list all athletes for the game with their bus status
+app.get('/api/bus/game/:gameId', requireAuth, async (req, res) => {
+  try {
+    const gameId = parseInt(req.params.gameId);
+    // Verify game belongs to this school
+    const { rows: gameRows } = await query(
+      'SELECT id, sport_id FROM game_events WHERE id=$1 AND school_id=$2',
+      [gameId, req.session.schoolId]
+    );
+    if (!gameRows[0]) return res.status(404).json({ error: 'Game not found' });
+
+    const sportId = req.session.role === 'coach' ? req.session.sportId : null;
+
+    let sql = `
+      SELECT a.id AS athlete_id, a.name AS athlete_name, a.student_id, a.year,
+             a.eligibility_status, a.schoolbridge_student_id,
+             gdb.id AS bus_id, gdb.status AS bus_status,
+             gdb.departed_at, gdb.estimated_return, gdb.arrived_at,
+             gdb.return_departed_at, gdb.returned_at
+      FROM athletes a
+      LEFT JOIN game_day_bus gdb ON gdb.athlete_id = a.id AND gdb.game_event_id = $1
+      WHERE a.school_id = $2 AND a.sport_id = $3
+      ORDER BY a.name
+    `;
+    const { rows } = await query(sql, [gameId, req.session.schoolId, gameRows[0].sport_id]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/bus/game/:gameId/roster — upsert athletes onto bus roster
+app.post('/api/bus/game/:gameId/roster', requireAuth, async (req, res) => {
+  try {
+    const gameId = parseInt(req.params.gameId);
+    const { athlete_ids } = req.body;
+    if (!Array.isArray(athlete_ids)) return res.status(400).json({ error: 'athlete_ids array required' });
+
+    const { rows: gameRows } = await query(
+      'SELECT id FROM game_events WHERE id=$1 AND school_id=$2',
+      [gameId, req.session.schoolId]
+    );
+    if (!gameRows[0]) return res.status(404).json({ error: 'Game not found' });
+
+    // Remove athletes not in the new roster
+    await query(
+      `DELETE FROM game_day_bus WHERE game_event_id=$1 AND athlete_id NOT IN (${athlete_ids.length ? athlete_ids.map((_,i)=>`$${i+2}`).join(',') : 'NULL'})`,
+      [gameId, ...athlete_ids]
+    );
+
+    // Upsert athletes in the new roster
+    for (const aid of athlete_ids) {
+      const { rows: aRows } = await query(
+        'SELECT schoolbridge_student_id FROM athletes WHERE id=$1 AND school_id=$2',
+        [aid, req.session.schoolId]
+      );
+      if (!aRows[0]) continue;
+      await query(`
+        INSERT INTO game_day_bus (game_event_id, athlete_id, schoolbridge_student_id, status, added_by)
+        VALUES ($1,$2,$3,'school',$4)
+        ON CONFLICT (game_event_id, athlete_id) DO NOTHING
+      `, [gameId, aid, aRows[0].schoolbridge_student_id || null, req.session.userId]);
+    }
+
+    await logActivity(req.session.schoolId, req.session.userId, 'bus_roster_saved',
+      `Bus roster saved for game ${gameId}: ${athlete_ids.length} athletes`, 'game_event', gameId);
+    res.json({ ok: true, count: athlete_ids.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/bus/game/:gameId/stage — advance all (or subset) to a journey stage
+app.post('/api/bus/game/:gameId/stage', requireAuth, async (req, res) => {
+  try {
+    const gameId = parseInt(req.params.gameId);
+    const { stage, estimated_return, athlete_ids } = req.body;
+
+    const validStages = ['departed', 'arrived', 'returning', 'returned'];
+    if (!validStages.includes(stage)) return res.status(400).json({ error: 'Invalid stage' });
+
+    const { rows: gameRows } = await query(
+      'SELECT id FROM game_events WHERE id=$1 AND school_id=$2',
+      [gameId, req.session.schoolId]
+    );
+    if (!gameRows[0]) return res.status(404).json({ error: 'Game not found' });
+
+    const stageMap = {
+      departed:  { status: 'on_bus',    field: 'departed_at' },
+      arrived:   { status: 'at_venue',  field: 'arrived_at' },
+      returning: { status: 'returning', field: 'return_departed_at' },
+      returned:  { status: 'returned',  field: 'returned_at' },
+    };
+    const { status, field } = stageMap[stage];
+
+    let whereClause = 'game_event_id=$1';
+    const params = [gameId];
+
+    if (Array.isArray(athlete_ids) && athlete_ids.length > 0) {
+      whereClause += ` AND athlete_id IN (${athlete_ids.map((_,i)=>`$${i+2}`).join(',')})`;
+      params.push(...athlete_ids);
+    }
+
+    let sql = `UPDATE game_day_bus SET status=$${params.length+1}, ${field}=NOW()`;
+    params.push(status);
+
+    if (stage === 'returning' && estimated_return) {
+      sql += `, estimated_return=$${params.length+1}`;
+      params.push(estimated_return);
+    }
+
+    sql += ` WHERE ${whereClause}`;
+    await query(sql, params);
+
+    await logActivity(req.session.schoolId, req.session.userId, 'bus_stage_advanced',
+      `Bus stage → ${stage} for game ${gameId}`, 'game_event', gameId);
+    res.json({ ok: true, stage });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/bus/athlete/:athleteId/toggle — toggle single athlete on/off bus roster
+app.post('/api/bus/athlete/:athleteId/toggle', requireAuth, async (req, res) => {
+  try {
+    const athleteId = parseInt(req.params.athleteId);
+    const { game_event_id, on_bus } = req.body;
+    if (!game_event_id) return res.status(400).json({ error: 'game_event_id required' });
+
+    const { rows: gameRows } = await query(
+      'SELECT id FROM game_events WHERE id=$1 AND school_id=$2',
+      [game_event_id, req.session.schoolId]
+    );
+    if (!gameRows[0]) return res.status(404).json({ error: 'Game not found' });
+
+    if (on_bus) {
+      const { rows: aRows } = await query(
+        'SELECT schoolbridge_student_id FROM athletes WHERE id=$1 AND school_id=$2',
+        [athleteId, req.session.schoolId]
+      );
+      if (!aRows[0]) return res.status(404).json({ error: 'Athlete not found' });
+      await query(`
+        INSERT INTO game_day_bus (game_event_id, athlete_id, schoolbridge_student_id, status, added_by)
+        VALUES ($1,$2,$3,'school',$4)
+        ON CONFLICT (game_event_id, athlete_id) DO NOTHING
+      `, [game_event_id, athleteId, aRows[0].schoolbridge_student_id || null, req.session.userId]);
+    } else {
+      await query('DELETE FROM game_day_bus WHERE game_event_id=$1 AND athlete_id=$2', [game_event_id, athleteId]);
+    }
+
+    res.json({ ok: true, on_bus: !!on_bus });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/bridge/bus-transit — SchoolBridge bridge endpoint
+app.get('/api/bridge/bus-transit', async (req, res) => {
+  if (!process.env.BRIDGE_API_KEY || req.headers['x-bridge-api-key'] !== process.env.BRIDGE_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const { rows } = await query(`
+      SELECT gdb.schoolbridge_student_id, a.name AS athlete_name,
+             ge.opponent AS game_opponent,
+             ge.game_time,
+             gdb.status, gdb.estimated_return, gdb.departed_at
+      FROM game_day_bus gdb
+      JOIN athletes a ON a.id = gdb.athlete_id
+      JOIN game_events ge ON ge.id = gdb.game_event_id
+      WHERE gdb.schoolbridge_student_id IS NOT NULL
+        AND ge.game_date = $1
+        AND ge.status != 'cancelled'
+      ORDER BY ge.game_time ASC NULLS LAST, a.name
+    `, [today]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Academic risk: manual trigger ─────────────────────────────────────────────
 app.post('/api/academic/sync', requireAuth, async (req, res) => {
   try {

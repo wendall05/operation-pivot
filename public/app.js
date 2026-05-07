@@ -131,6 +131,7 @@ async function render() {
       case 'dashboard':    [content, modals] = await renderDashboard(); break;
       case 'gameday':      [content, modals] = await renderGameDay(); break;
       case 'gameday-roster': [content, modals] = await renderGameRoster(); break;
+      case 'gameday-bus':  [content, modals] = await renderBusManagement(S.params.gameId); break;
       case 'trips':        [content, modals] = await renderTrips(); break;
       case 'trip-detail':  [content, modals] = await renderTripDetail(); break;
       case 'sports':       [content, modals] = await renderSports(); break;
@@ -2211,6 +2212,15 @@ async function renderGameDay() {
         </div>
       </div>
       <p class="text-xs text-slate-400 mt-2">Last checked: ${checked}</p>
+      <!-- Bus section -->
+      <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-base">🚌</span>
+          <span class="text-xs font-semibold text-slate-600">Bus</span>
+          <span id="bus-badge-${g.game_event_id}" class="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">Loading…</span>
+        </div>
+        <button onclick="nav('gameday-bus',{gameId:${g.game_event_id},gameName:'${esc(g.sport_name||g.team_name)} vs ${esc(g.opponent)}'})" class="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2.5 py-1 rounded-lg transition-colors">Manage Bus →</button>
+      </div>
     </div>`;
   }).join('')}
 
@@ -2238,11 +2248,27 @@ async function renderGameDay() {
     </div>
   </div>`;
 
-  // Load sports into select
+  // Load sports into select and bus badges
   setTimeout(async () => {
     const sports = await GET('/api/sports').catch(()=>[]);
     const sel = document.getElementById('ag-sport');
     if (sel) sel.innerHTML = '<option value="">Select sport…</option>' + sports.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+
+    // Load bus stage badges for each game card
+    for (const g of games) {
+      const el = document.getElementById(`bus-badge-${g.game_event_id}`);
+      if (!el) continue;
+      try {
+        const roster = await GET(`/api/bus/game/${g.game_event_id}`);
+        const onRoster = roster.filter(r => r.bus_id);
+        if (onRoster.length === 0) { el.className = 'px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500'; el.textContent = 'Not Departed'; continue; }
+        const statuses = onRoster.map(r => r.bus_status);
+        const stage = busStageSummary(statuses);
+        const { cls, label } = busStageBadge(stage);
+        el.className = `px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`;
+        el.textContent = label;
+      } catch { el.textContent = '—'; }
+    }
   }, 50);
 
   return [content, modals];
@@ -2370,6 +2396,195 @@ async function triggerAcademicSync() {
     await POST('/api/academic/sync');
     toast('Academic sync complete ✓');
     nav('dashboard');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Bus Transit Management ────────────────────────────────────────────────────
+
+function busStageBadge(stage) {
+  const map = {
+    school:    { cls: 'bg-slate-100 text-slate-600',   label: 'Not Departed' },
+    on_bus:    { cls: 'bg-blue-100 text-blue-800',     label: 'En Route' },
+    at_venue:  { cls: 'bg-emerald-100 text-emerald-800', label: 'At Venue' },
+    returning: { cls: 'bg-amber-100 text-amber-800',   label: 'Returning' },
+    returned:  { cls: 'bg-slate-200 text-slate-700',   label: 'Back at School' },
+  };
+  return map[stage] || map['school'];
+}
+
+// Determine the dominant stage from an array of status strings
+function busStageSummary(statuses) {
+  const priority = ['returning', 'on_bus', 'at_venue', 'returned', 'school'];
+  for (const s of priority) { if (statuses.includes(s)) return s; }
+  return 'school';
+}
+
+async function renderBusManagement(gameId) {
+  if (!gameId) { nav('gameday'); return ['', '']; }
+
+  const [roster, gameRows] = await Promise.all([
+    GET(`/api/bus/game/${gameId}`),
+    GET(`/api/gameday/games?date=${new Date().toISOString().split('T')[0]}`).catch(() => []),
+  ]);
+
+  const gameName = S.params.gameName || '';
+  const onRoster = roster.filter(r => r.bus_id);
+  const statuses = onRoster.map(r => r.bus_status);
+  const currentStage = busStageSummary(statuses.length ? statuses : ['school']);
+
+  // Estimated return from any roster member that has it
+  const etaRow = onRoster.find(r => r.estimated_return);
+  const etaStr = etaRow ? new Date(etaRow.estimated_return).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
+
+  const stageSteps = [
+    { key: 'school',    icon: '🏫', label: 'School' },
+    { key: 'on_bus',    icon: '🚌', label: 'En Route' },
+    { key: 'at_venue',  icon: '🏟️', label: 'At Venue' },
+    { key: 'returning', icon: '🔄', label: 'Returning' },
+    { key: 'returned',  icon: '🏫', label: 'Back' },
+  ];
+  const currentIdx = stageSteps.findIndex(s => s.key === currentStage);
+
+  const progressBar = `
+  <div class="flex items-center gap-1 mb-6">
+    ${stageSteps.map((s, i) => {
+      const done = i < currentIdx;
+      const active = i === currentIdx;
+      return `
+      <div class="flex-1 flex flex-col items-center">
+        <div class="w-9 h-9 rounded-full flex items-center justify-center text-base mb-1
+          ${active ? 'ring-2 ring-blue-500 bg-blue-50' : done ? 'bg-emerald-100' : 'bg-slate-100'}">
+          ${s.icon}
+        </div>
+        <span class="text-xs font-medium ${active ? 'text-blue-700' : done ? 'text-emerald-700' : 'text-slate-400'}">${s.label}</span>
+      </div>
+      ${i < stageSteps.length - 1 ? `<div class="flex-shrink-0 h-0.5 w-4 ${i < currentIdx ? 'bg-emerald-400' : 'bg-slate-200'}"></div>` : ''}`;
+    }).join('')}
+  </div>`;
+
+  const rosterRows = roster.map(a => {
+    const isOnRoster = !!a.bus_id;
+    const { cls, label } = busStageBadge(a.bus_status || 'school');
+    return `
+    <div class="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+      <input type="checkbox" id="bus-ck-${a.athlete_id}" ${isOnRoster ? 'checked' : ''}
+        onchange="toggleBusAthlete(${a.athlete_id}, ${gameId}, this.checked)"
+        class="w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer"/>
+      <div class="flex-1 min-w-0">
+        <span class="font-medium text-sm text-slate-900">${esc(a.athlete_name)}</span>
+        <span class="text-xs text-slate-400 ml-1">${esc(a.year || '')}</span>
+      </div>
+      ${isOnRoster ? `<span class="px-2 py-0.5 rounded-full text-xs font-semibold ${cls}">${label}</span>` : '<span class="text-xs text-slate-300">Not on bus</span>'}
+    </div>`;
+  }).join('');
+
+  const stageButtons = [
+    { stage: 'departed',  icon: '🚌', label: 'Depart to Game',    from: 'school',    active: currentStage === 'school' },
+    { stage: 'arrived',   icon: '🏟️', label: 'Mark Arrived',      from: 'on_bus',    active: currentStage === 'on_bus' },
+    { stage: 'returning', icon: '🔄', label: 'Departing Return',   from: 'at_venue',  active: currentStage === 'at_venue' },
+    { stage: 'returned',  icon: '✅', label: 'Back at School',     from: 'returning', active: currentStage === 'returning' },
+  ];
+
+  const stageButtonsHtml = `
+  <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    ${stageButtons.map(b => `
+      <button onclick="${b.stage === 'returning' ? `showReturnEtaInput(${gameId})` : `advanceBusStage(${gameId},'${b.stage}')`}"
+        class="flex flex-col items-center gap-1.5 p-4 rounded-xl border-2 transition-all
+          ${b.active ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'}">
+        <span class="text-2xl">${b.icon}</span>
+        <span class="text-xs font-semibold text-center leading-tight">${b.label}</span>
+      </button>`).join('')}
+  </div>
+  <div id="return-eta-input" class="hidden mt-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+    <label class="block text-sm font-semibold text-amber-800 mb-2">Estimated Return Time</label>
+    <div class="flex gap-2">
+      <input type="datetime-local" id="return-eta-dt" class="flex-1 px-3 py-2 border border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"/>
+      <button onclick="confirmReturnDeparture(${gameId})" class="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600">Confirm</button>
+      <button onclick="document.getElementById('return-eta-input').classList.add('hidden')" class="px-3 py-2 border border-amber-200 rounded-lg text-sm text-amber-700 hover:bg-amber-100">Cancel</button>
+    </div>
+  </div>`;
+
+  const content = `
+  <div class="mb-5 flex items-center gap-3">
+    <button onclick="nav('gameday')" class="text-slate-400 hover:text-slate-700">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    <div>
+      <h1 class="text-xl font-bold text-slate-900">🚌 Bus Management</h1>
+      <p class="text-sm text-slate-500">${esc(gameName)}</p>
+    </div>
+  </div>
+
+  ${progressBar}
+
+  <!-- Traveling Roster -->
+  <div class="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-bold text-slate-900">Traveling Roster</h2>
+      <span class="text-xs text-slate-400">${onRoster.length} of ${roster.length} on bus</span>
+    </div>
+    <div class="mb-3">${rosterRows || '<p class="text-sm text-slate-400 py-3 text-center">No athletes found for this sport.</p>'}</div>
+    <button onclick="saveBusRoster(${gameId})" class="w-full py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-semibold transition-colors">Save Roster</button>
+  </div>
+
+  <!-- Advance Stage -->
+  <div class="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+    <h2 class="font-bold text-slate-900 mb-3">Advance Stage</h2>
+    ${stageButtonsHtml}
+  </div>
+
+  <!-- Return ETA -->
+  ${etaStr ? `
+  <div class="bg-white rounded-2xl border border-slate-200 p-5">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="font-bold text-slate-900">Return ETA</h2>
+        <p class="text-sm text-slate-600 mt-0.5">${etaStr}</p>
+      </div>
+      <button onclick="showReturnEtaInput(${gameId})" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg">Edit</button>
+    </div>
+  </div>` : ''}`;
+
+  return [content, ''];
+}
+
+async function saveBusRoster(gameId) {
+  const checkboxes = document.querySelectorAll('[id^="bus-ck-"]');
+  const athlete_ids = [];
+  checkboxes.forEach(cb => { if (cb.checked) athlete_ids.push(parseInt(cb.id.replace('bus-ck-', ''))); });
+  try {
+    await POST(`/api/bus/game/${gameId}/roster`, { athlete_ids });
+    toast(`Roster saved — ${athlete_ids.length} athletes on bus`);
+    nav('gameday-bus', S.params);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleBusAthlete(athleteId, gameId, onBus) {
+  try {
+    await POST(`/api/bus/athlete/${athleteId}/toggle`, { game_event_id: gameId, on_bus: onBus });
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function advanceBusStage(gameId, stage) {
+  try {
+    await POST(`/api/bus/game/${gameId}/stage`, { stage });
+    toast(`Stage updated: ${stage.replace('_', ' ')}`);
+    nav('gameday-bus', S.params);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function showReturnEtaInput(gameId) {
+  const el = document.getElementById('return-eta-input');
+  if (el) el.classList.remove('hidden');
+}
+
+async function confirmReturnDeparture(gameId) {
+  const dtVal = document.getElementById('return-eta-dt')?.value;
+  if (!dtVal) { toast('Please select an estimated return time', 'error'); return; }
+  try {
+    await POST(`/api/bus/game/${gameId}/stage`, { stage: 'returning', estimated_return: new Date(dtVal).toISOString() });
+    toast('Return departure confirmed — ETA set');
+    nav('gameday-bus', S.params);
   } catch(e) { toast(e.message, 'error'); }
 }
 
