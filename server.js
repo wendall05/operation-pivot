@@ -700,6 +700,26 @@ app.post('/api/bus/athlete/:athleteId/toggle', requireAuth, async (req, res) => 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PATCH /api/bridge/athletes/link — called by SchoolBridge pivot-sandbox to set schoolbridge_student_id
+app.patch('/api/bridge/athletes/link', async (req, res) => {
+  if (!process.env.BRIDGE_API_KEY || req.headers['x-bridge-api-key'] !== process.env.BRIDGE_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const { links } = req.body; // [{ athlete_name, schoolbridge_student_id }]
+    if (!Array.isArray(links) || !links.length) return res.status(400).json({ error: 'links array required' });
+    let updated = 0;
+    for (const { athlete_name, schoolbridge_student_id } of links) {
+      const r = await query(
+        `UPDATE athletes SET schoolbridge_student_id=$1 WHERE name=$2`,
+        [schoolbridge_student_id, athlete_name]
+      );
+      updated += r.rowCount;
+    }
+    res.json({ ok: true, updated });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/bridge/bus-transit — SchoolBridge bridge endpoint
 app.get('/api/bridge/bus-transit', async (req, res) => {
   if (!process.env.BRIDGE_API_KEY || req.headers['x-bridge-api-key'] !== process.env.BRIDGE_API_KEY) {
