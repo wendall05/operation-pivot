@@ -3,6 +3,8 @@ const S = { user: null, page: 'login', params: {} };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// Safe for use inside single-quoted JS strings in onclick attributes
+function jsq(s) { return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function fmt(d) { if (!d) return '—'; const p = d.split('T')[0].split('-'); return `${p[1]}/${p[2]}/${p[0]}`; }
 function ago(d) { if (!d) return ''; const h = Math.floor((Date.now()-new Date(d))/3600000); if (h<1) return 'just now'; if (h<24) return `${h}h ago`; return `${Math.floor(h/24)}d ago`; }
 function daysUntil(d) { if (!d) return null; return Math.ceil((new Date(d)-Date.now())/86400000); }
@@ -66,7 +68,8 @@ function shell(content, modals = '') {
   const allNavLinks = [
     { page: 'dashboard', label: 'Dashboard', svg: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>' },
     { page: 'gameday', label: 'Game Day', svg: '<path d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/>' },
-    { page: 'trips', label: 'Trips', svg: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>' },
+    { page: 'bus-transit', label: 'Bus Transit', svg: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>' },
+    { page: 'trips', label: 'Trips', svg: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>', adminOnly: true },
     { page: 'sports', label: 'Sports', svg: '<circle cx="12" cy="12" r="10"/><path d="M4.93 4.93l4.24 4.24"/><path d="M14.83 9.17l4.24-4.24"/><path d="M14.83 14.83l4.24 4.24"/><path d="M9.17 14.83l-4.24 4.24"/><circle cx="12" cy="12" r="4"/>', adminOnly: true },
     { page: 'roster', label: 'Roster', svg: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>' },
     { page: 'reports', label: 'Reports', svg: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>', adminOnly: true },
@@ -132,6 +135,7 @@ async function render() {
       case 'gameday':      [content, modals] = await renderGameDay(); break;
       case 'gameday-roster': [content, modals] = await renderGameRoster(); break;
       case 'gameday-bus':  [content, modals] = await renderBusManagement(S.params.gameId); break;
+      case 'bus-transit':  [content, modals] = await renderBusTransit(); break;
       case 'trips':        [content, modals] = await renderTrips(); break;
       case 'trip-detail':  [content, modals] = await renderTripDetail(); break;
       case 'sports':       [content, modals] = await renderSports(); break;
@@ -2208,7 +2212,7 @@ async function renderGameDay() {
         </div>
         <div class="flex gap-2">
           <button onclick="runGameCheck(${g.game_event_id})" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded-lg transition-colors">Run Check</button>
-          <button onclick="nav('gameday-roster',{gameId:${g.game_event_id},gameName:'${esc(g.sport_name||g.team_name)} vs ${esc(g.opponent)}'})" class="text-xs bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg transition-colors">View Roster →</button>
+          <button onclick="nav('gameday-roster',{gameId:${g.game_event_id},gameName:'${jsq(g.sport_name||g.team_name)} vs ${jsq(g.opponent)}'})" class="text-xs bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg transition-colors">View Roster →</button>
         </div>
       </div>
       <p class="text-xs text-slate-400 mt-2">Last checked: ${checked}</p>
@@ -2219,7 +2223,7 @@ async function renderGameDay() {
           <span class="text-xs font-semibold text-slate-600">Bus</span>
           <span id="bus-badge-${g.game_event_id}" class="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">Loading…</span>
         </div>
-        <button onclick="nav('gameday-bus',{gameId:${g.game_event_id},gameName:'${esc(g.sport_name||g.team_name)} vs ${esc(g.opponent)}'})" class="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2.5 py-1 rounded-lg transition-colors">Manage Bus →</button>
+        <button onclick="nav('gameday-bus',{gameId:${g.game_event_id},gameName:'${jsq(g.sport_name||g.team_name)} vs ${jsq(g.opponent)}'})" class="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2.5 py-1 rounded-lg transition-colors">Manage Bus →</button>
       </div>
     </div>`;
   }).join('')}
@@ -2417,6 +2421,97 @@ function busStageSummary(statuses) {
   const priority = ['returning', 'on_bus', 'at_venue', 'returned', 'school'];
   for (const s of priority) { if (statuses.includes(s)) return s; }
   return 'school';
+}
+
+async function renderBusTransit() {
+  const today = new Date().toISOString().split('T')[0];
+  const games = await GET(`/api/gameday/readiness?date=${today}`).catch(() => []);
+
+  // For each game, fetch bus roster
+  const gameBusData = await Promise.all(
+    games.map(async g => {
+      const roster = await GET(`/api/bus/game/${g.game_event_id}`).catch(() => []);
+      const onBus = roster.filter(r => r.bus_id && r.bus_status && r.bus_status !== 'school');
+      const stage = busStageSummary(onBus.map(r => r.bus_status).length ? onBus.map(r => r.bus_status) : ['school']);
+      const eta = onBus.find(r => r.estimated_return);
+      return { ...g, roster, onBus, stage, eta };
+    })
+  );
+
+  const stageSteps = [
+    { key: 'school',    icon: '🏫', label: 'At School' },
+    { key: 'on_bus',    icon: '🚌', label: 'En Route' },
+    { key: 'at_venue',  icon: '🏟️', label: 'At Venue' },
+    { key: 'returning', icon: '🔄', label: 'Returning' },
+    { key: 'returned',  icon: '✅', label: 'Back' },
+  ];
+
+  const content = `
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-slate-900">Bus Transit</h1>
+    <p class="text-sm text-slate-500 mt-0.5">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})} · Live status</p>
+  </div>
+
+  ${gameBusData.length === 0 ? `
+  <div class="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+    <div class="text-5xl mb-3">🚌</div>
+    <p class="text-slate-600 font-medium">No games scheduled today</p>
+  </div>` : gameBusData.map(g => {
+    const emoji = sportEmoji(g.sport_name || g.team_name);
+    const gameTime = g.game_time ? g.game_time.slice(0,5) : '';
+    const currentIdx = stageSteps.findIndex(s => s.key === g.stage);
+    const etaStr = g.eta ? new Date(g.eta.estimated_return).toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) : null;
+
+    const progressBar = stageSteps.map((s, i) => {
+      const done = i < currentIdx;
+      const active = i === currentIdx;
+      return `<div class="flex-1 flex flex-col items-center">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm mb-0.5
+          ${active ? 'ring-2 ring-blue-500 bg-blue-50' : done ? 'bg-emerald-100' : 'bg-slate-100'}">
+          ${s.icon}
+        </div>
+        <span class="text-xs ${active ? 'text-blue-700 font-semibold' : done ? 'text-emerald-700' : 'text-slate-400'}">${s.label}</span>
+      </div>
+      ${i < stageSteps.length - 1 ? `<div class="flex-shrink-0 h-0.5 w-3 self-center mb-4 ${i < currentIdx ? 'bg-emerald-400' : 'bg-slate-200'}"></div>` : ''}`;
+    }).join('');
+
+    return `
+    <div class="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-3">
+          <span class="text-3xl">${emoji}</span>
+          <div>
+            <p class="font-bold text-slate-900">${esc(g.sport_name||g.team_name)}</p>
+            <p class="text-sm text-slate-500">vs ${esc(g.opponent)} · ${gameTime} · ${g.is_home?'Home':'Away'}</p>
+          </div>
+        </div>
+        <button onclick="nav('gameday-bus',{gameId:${g.game_event_id},gameName:'${jsq(g.sport_name||g.team_name)} vs ${jsq(g.opponent)}'})"
+          class="text-xs bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-colors font-semibold">
+          Manage →
+        </button>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="flex items-center gap-1 mb-4">${progressBar}</div>
+
+      ${etaStr ? `<p class="text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg mb-3">🕐 ETA back at school: <strong>${etaStr}</strong></p>` : ''}
+
+      <!-- Athlete list -->
+      ${g.onBus.length === 0
+        ? `<p class="text-xs text-slate-400 text-center py-2">No athletes on bus yet</p>`
+        : `<div class="space-y-1">
+          ${g.onBus.map(a => {
+            const { cls, label } = busStageBadge(a.bus_status || 'school');
+            return `<div class="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-slate-50">
+              <span class="text-sm font-medium text-slate-900">${esc(a.athlete_name)}</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-semibold ${cls}">${label}</span>
+            </div>`;
+          }).join('')}
+        </div>`}
+    </div>`;
+  }).join('')}`;
+
+  return [content, ''];
 }
 
 async function renderBusManagement(gameId) {
