@@ -34,7 +34,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(session({
   store: new pgSession({ pool: sessionPool, createTableIfMissing: true }),
-  secret: process.env.SESSION_SECRET || 'op-dev-secret-2026',
+  secret: process.env.SESSION_SECRET || (process.env.NODE_ENV === 'production' ? (() => { throw new Error('FATAL: SESSION_SECRET must be set in production'); })() : 'op-dev-only'),
   resave: false,
   saveUninitialized: false,
   cookie: { secure: process.env.NODE_ENV === 'production', maxAge: 7 * 24 * 60 * 60 * 1000 }
